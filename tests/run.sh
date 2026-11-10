@@ -19,7 +19,7 @@ CASE=
 # ---- the tools setup.sh may use (and the stub installer needs), linked into one folder -----------------------------------------------------------------
 BELT=$ROOT/belt
 mkdir -p "$BELT"
-for tool in sh sed grep head tee cat mktemp rm sleep uname cp mkdir chmod; do
+for tool in sh sed grep head tail tr tee cat mktemp rm sleep uname cp mkdir chmod; do
     found=$(command -v "$tool") || {
         echo "this test needs '$tool' and did not find it"
         exit 1
@@ -59,7 +59,11 @@ case $url in
     *)
         [ "${STUB_DOWNLOAD:-ok}" = ok ] || exit 22
         echo "download $url" >>"$STUB_LOG"
-        cp "$STUB_INSTALLER" "$out"
+        case $url in
+            *releases.herdr.dev/core/* | *example.test/core.sh) cp "$STUB_HC_INSTALLER" "$out" ;;
+            *herdr.dev/install.sh*) cp "$STUB_HERDR_INSTALLER" "$out" ;;
+            *) cp "$STUB_INSTALLER" "$out" ;;
+        esac
         ;;
 esac
 EOF
@@ -67,12 +71,18 @@ EOF
 # collie: records the call and prints what the real commands print (shapes taken from Collie's own source).
 cat >"$STUBS/collie" <<'EOF'
 #!/bin/sh
-echo "collie $*" >>"$STUB_LOG"
+echo "collie $* [mux=${COLLIE_MUX:-none}]" >>"$STUB_LOG"
 case $1 in
     version) echo "collie 1.27.0" ;;
     start | restart)
         [ "${STUB_START_RC:-0}" = 0 ] || { echo "start went wrong"; exit "$STUB_START_RC"; }
         echo "  ✓ Collie is running · v1.27.0"
+        # Like the real Collie: a multiplexer named in the environment is written to the .env, unless the .env names one already.
+        if [ -n "${COLLIE_MUX:-}" ] && ! grep -q '^COLLIE_MUX=' "$HOME/.config/collie/.env" 2>/dev/null; then
+            mkdir -p "$HOME/.config/collie"
+            # The real Collie keeps its .env private too (it holds settings that are not for others).
+            (umask 077; echo "COLLIE_MUX=$COLLIE_MUX" >>"$HOME/.config/collie/.env")
+        fi
         if [ -n "${STUB_SETUP:-}" ]; then
             echo "  setup: $STUB_SETUP"
             echo "    fix: do the thing it says"
@@ -91,8 +101,11 @@ case $1 in
         if [ "${STUB_NO_CERTS:-0}" = 1 ] && [ "${STUB_IGNORE_ENV:-0}" != 1 ] && grep -q '^COLLIE_SERVE_MODE=http$' "$HOME/.config/collie/.env" 2>/dev/null; then
             phone='"http://mb17.headnet.example:8787"'
         fi
-        printf '{"running":true,"version":"1.27.0","instance":"default","port":8787,"localUrl":"%s","phoneUrl":%s,"pairedDevices":0}\n' \
-            "$STUB_LOCAL_URL" "$phone"
+        # The .env wins over the environment, as in the real Collie; STUB_MUX_REPORT forces what it reports.
+        mux=$(sed -n 's/^COLLIE_MUX=//p' "$HOME/.config/collie/.env" 2>/dev/null | tail -n 1)
+        : "${mux:=${COLLIE_MUX:-herdr-core}}"
+        printf '{"running":true,"version":"1.27.0","instance":"default","port":8787,"mux":"%s","localUrl":"%s","phoneUrl":%s,"pairedDevices":0}\n' \
+            "${STUB_MUX_REPORT:-$mux}" "$STUB_LOCAL_URL" "$phone"
         ;;
     pair)
         echo "ABCD2345"
@@ -114,7 +127,46 @@ mkdir -p "$HOME/.local/bin"
 cp "$STUB_REAL_COLLIE" "$HOME/.local/bin/collie"
 chmod +x "$HOME/.local/bin/collie"
 EOF
-chmod +x "$STUBS/curl" "$STUBS/collie" "$STUBS/installer.sh"
+# hc (herdr-core): `hc server start` starts the core, and starting twice is fine, as in the real one.
+cat >"$STUBS/hc" <<'EOF'
+#!/bin/sh
+echo "hc $*" >>"$STUB_LOG"
+[ "${STUB_HC_START_RC:-0}" = 0 ] || { echo "could not start"; exit "$STUB_HC_START_RC"; }
+echo '{"core":{"id":"x"},"pid":1,"version":"0.1.19"}'
+EOF
+
+# herdr: `herdr status server` says whether the server runs (STUB_HERDR_RUNNING=1), in the words of the real one.
+cat >"$STUBS/herdr" <<'EOF'
+#!/bin/sh
+echo "herdr $*" >>"$STUB_LOG"
+if [ "${STUB_HERDR_RUNNING:-0}" = 1 ]; then
+    echo "status: running"
+else
+    echo "status: not running"
+    echo "socket: /home/x/.config/herdr/herdr.sock"
+fi
+EOF
+
+# The installers of the two: each puts its stub where the real one goes.
+cat >"$STUBS/hc-installer.sh" <<'EOF'
+#!/bin/sh
+cat >/dev/null
+[ "${STUB_MUX_INSTALLER_FAIL:-0}" = 1 ] && { echo "installer broke"; exit 1; }
+echo "hc installer ran" >>"$STUB_LOG"
+mkdir -p "$HOME/.local/bin"
+cp "$STUB_HC" "$HOME/.local/bin/hc"
+chmod +x "$HOME/.local/bin/hc"
+EOF
+cat >"$STUBS/herdr-installer.sh" <<'EOF'
+#!/bin/sh
+cat >/dev/null
+[ "${STUB_MUX_INSTALLER_FAIL:-0}" = 1 ] && { echo "installer broke"; exit 1; }
+echo "herdr installer ran" >>"$STUB_LOG"
+mkdir -p "$HOME/.local/bin"
+cp "$STUB_HERDR" "$HOME/.local/bin/herdr"
+chmod +x "$HOME/.local/bin/herdr"
+EOF
+chmod +x "$STUBS/curl" "$STUBS/collie" "$STUBS/installer.sh" "$STUBS/hc" "$STUBS/herdr" "$STUBS/hc-installer.sh" "$STUBS/herdr-installer.sh"
 
 # ---- the harness --------------------------------------------------------------------------------------------------------
 
@@ -154,17 +206,25 @@ run_case() {
         echo "export STUB_PHONE_JSON='\"https://mac.tail1234.ts.net\"'"
         echo "export STUB_INSTALLER=$STUBS/installer.sh"
         echo "export STUB_REAL_COLLIE=$STUBS/collie"
+        echo "export STUB_HC_INSTALLER=$STUBS/hc-installer.sh"
+        echo "export STUB_HERDR_INSTALLER=$STUBS/herdr-installer.sh"
+        echo "export STUB_HC=$STUBS/hc"
+        echo "export STUB_HERDR=$STUBS/herdr"
         echo "export DOGR_TTY=$sandbox/tty"
         echo "export DOGR_TRIES=2"
         echo "export DOGR_POLL_DELAY=0"
     } >"$wrapper"
     installed=1
+    hc_installed=1
+    herdr_installed=0
     ask=
     envfile=
     mode="file"
     while [ $# -gt 0 ] && [ "$1" != "--" ]; do
         case $1 in
             COLLIE_INSTALLED=0) installed=0 ;;
+            HC_INSTALLED=0) hc_installed=0 ;;
+            HERDR_INSTALLED=1) herdr_installed=1 ;;
             ASK=*) ask=${1#ASK=} ;;
             ENVFILE=*) envfile=${1#ENVFILE=} ;;
             PIPE=1) mode="pipe" ;;
@@ -177,6 +237,8 @@ run_case() {
     echo 'exec sh "$@"' >>"$wrapper"
     cp "$STUBS/curl" "$sandbox/path/curl"
     if [ "$installed" = 1 ]; then cp "$STUBS/collie" "$sandbox/path/collie"; fi
+    if [ "$hc_installed" = 1 ]; then cp "$STUBS/hc" "$sandbox/path/hc"; fi
+    if [ "$herdr_installed" = 1 ]; then cp "$STUBS/herdr" "$sandbox/path/herdr"; fi
     # With no ASK there is no terminal at all: DOGR_TTY keeps pointing at a file that does not exist.
     if [ -n "$ask" ]; then printf '%s\n' "$ask" | tr ',' '\n' >"$sandbox/tty"; fi
     if [ -n "$envfile" ]; then
@@ -222,6 +284,9 @@ expect_not_called() { if grep -qF -- "$1" "$LOG"; then bad "unexpected call: $1"
 # expect_env TEXT / expect_no_env: Collie's .env in the sandbox has / lacks that text
 expect_env() { if grep -qF -- "$1" "$sandbox/home/.config/collie/.env" 2>/dev/null; then ok; else bad ".env lacks: $1"; fi; }
 expect_no_env() { if grep -qF -- "$1" "$sandbox/home/.config/collie/.env" 2>/dev/null; then bad ".env has: $1"; else ok; fi; }
+# expect_env_line / expect_no_env_line: the .env has / lacks a whole line that is exactly TEXT
+expect_env_line() { if grep -qxF -- "$1" "$sandbox/home/.config/collie/.env" 2>/dev/null; then ok; else bad ".env has no line: $1"; fi; }
+expect_no_env_line() { if grep -qxF -- "$1" "$sandbox/home/.config/collie/.env" 2>/dev/null; then bad ".env has the line: $1"; else ok; fi; }
 # expect_order A B: the first call with A comes before the first call with B
 expect_order() {
     a=$(grep -nF -- "$1" "$LOG" | head -n 1 | cut -d: -f1)
@@ -459,6 +524,173 @@ expect_called "collie pair"
 run_case "cut off download" CUT=1 -- --tailscale --yes
 expect_not_called "collie"
 expect_not_called "curl"
+
+# ---- the terminal program: herdr or herdr-core ------------------------------------------------------------------------------
+
+# Only herdr-core is installed and no --mux is given: it is the obvious one. It is started, and Collie is told to drive it.
+run_case "mux found: only herdr-core" -- --tailscale --yes
+expect_rc 0
+expect_called "hc server start"
+expect_called "collie start [mux=herdr-core]"
+expect_order "hc server start" "collie start"
+expect_env_line "COLLIE_MUX=herdr-core"
+expect_out "herdr-core"
+
+# Only herdr is installed and it runs: no start command is needed (herdr has none without a terminal), Collie drives it.
+run_case "mux found: only herdr" HC_INSTALLED=0 HERDR_INSTALLED=1 STUB_HERDR_RUNNING=1 -- --tailscale --yes
+expect_rc 0
+expect_called "herdr status server"
+expect_called "collie start [mux=herdr]"
+expect_not_called "hc server start"
+expect_env_line "COLLIE_MUX=herdr"
+
+# --mux decides, also when the other one is installed too.
+run_case "mux named: herdr while both are installed" HERDR_INSTALLED=1 STUB_HERDR_RUNNING=1 -- --tailscale --mux herdr --yes
+expect_rc 0
+expect_called "collie start [mux=herdr]"
+expect_not_called "hc server start"
+run_case "mux named: herdr-core while both are installed" HERDR_INSTALLED=1 -- --tailscale --mux herdr-core --yes
+expect_rc 0
+expect_called "collie start [mux=herdr-core]"
+expect_not_called "herdr status"
+run_case "mux named with an equals sign" HERDR_INSTALLED=1 STUB_HERDR_RUNNING=1 -- --tailscale --mux=herdr --yes
+expect_rc 0
+expect_called "collie start [mux=herdr]"
+
+# herdr is installed but nobody has opened it: the script cannot do that without a terminal, so it says what to do and stops
+# before Collie starts. Running it again afterwards is safe.
+run_case "herdr not running" HC_INSTALLED=0 HERDR_INSTALLED=1 -- --tailscale --mux herdr --yes
+expect_rc 3
+expect_out "not running"
+expect_out "herdr"
+expect_out "Ctrl+b q"
+expect_not_called "collie start"
+expect_not_called "collie pair"
+
+# A computer that has neither: the one that was asked for is installed with its own installer, after the plan names the address.
+run_case "install herdr-core" HC_INSTALLED=0 -- --tailscale --mux herdr-core --yes
+expect_rc 0
+expect_called "download https://releases.herdr.dev/core/install.sh"
+expect_called "hc installer ran"
+expect_order "hc installer ran" "hc server start"
+expect_order "hc server start" "collie start"
+run_case "install herdr" HC_INSTALLED=0 STUB_HERDR_RUNNING=1 -- --tailscale --mux herdr --yes
+expect_rc 0
+expect_called "download https://herdr.dev/install.sh"
+expect_called "herdr installer ran"
+expect_order "herdr installer ran" "herdr status server"
+expect_not_called "hc installer ran"
+run_case "install herdr, then it must be opened" HC_INSTALLED=0 -- --tailscale --mux herdr --yes
+expect_rc 3
+expect_called "herdr installer ran"
+expect_out "not running"
+expect_not_called "collie start"
+
+# The installer addresses can be replaced.
+run_case "mux installer address" HC_INSTALLED=0 DOGR_HERDR_CORE_INSTALL_URL=https://example.test/core.sh -- --tailscale --mux herdr-core --yes
+expect_rc 0
+expect_called "download https://example.test/core.sh"
+
+# A failing download or installer stops before anything else is touched.
+run_case "mux download fails" HC_INSTALLED=0 STUB_DOWNLOAD=bad COLLIE_INSTALLED=1 -- --tailscale --mux herdr-core --yes
+expect_rc 5
+expect_out "could not download"
+expect_not_called "collie start"
+run_case "mux installer fails" HC_INSTALLED=0 STUB_MUX_INSTALLER_FAIL=1 -- --tailscale --mux herdr-core --yes
+expect_rc 5
+expect_out "installer failed"
+expect_not_called "collie start"
+
+# The core refuses to start.
+run_case "hc server start fails" STUB_HC_START_RC=1 -- --tailscale --mux herdr-core --yes
+expect_rc 4
+expect_out "could not start"
+expect_not_called "collie start"
+
+# The plan names what would be installed and where it comes from; a dry run downloads nothing.
+run_case "plan names the mux installer" HC_INSTALLED=0 -- --tailscale --mux herdr-core --dry-run
+expect_rc 0
+expect_out "Install herdr-core"
+expect_out "https://releases.herdr.dev/core/install.sh"
+expect_not_called "download"
+run_case "plan with the mux already there" -- --tailscale --mux herdr-core --dry-run
+expect_rc 0
+expect_out "herdr-core is already installed"
+expect_not_called "hc server start"
+
+# Nothing says which one: ask when both or neither are installed, and never guess without a terminal.
+run_case "ask: no terminal" HERDR_INSTALLED=1 -- --tailscale --yes
+expect_rc 1
+expect_out "--mux"
+expect_not_called "collie start"
+run_case "ask: neither installed, no terminal" HC_INSTALLED=0 -- --tailscale --yes
+expect_rc 1
+expect_out "--mux"
+run_case "ask: second answer" HERDR_INSTALLED=1 ASK=2 -- --tailscale --yes
+expect_rc 0
+expect_called "collie start [mux=herdr-core]"
+run_case "ask: first answer" HERDR_INSTALLED=1 STUB_HERDR_RUNNING=1 ASK=1 -- --tailscale --yes
+expect_rc 0
+expect_called "collie start [mux=herdr]"
+run_case "ask: by name" HERDR_INSTALLED=1 ASK=herdr-core -- --tailscale --yes
+expect_rc 0
+expect_called "collie start [mux=herdr-core]"
+run_case "ask: nonsense" HERDR_INSTALLED=1 ASK=maybe -- --tailscale --yes
+expect_rc 1
+expect_not_called "collie start"
+
+# A wrong --mux value is refused, with the usage.
+run_case "mux unknown value" -- --tailscale --mux tmux --yes
+expect_rc 1
+expect_out "herdr-core"
+run_case "mux without a value" -- --tailscale --mux
+expect_rc 1
+
+# Collie's .env already names another program: say so in the plan, and replace that line where it stands (Collie keeps the
+# .env as its own record, and a second COLLIE_MUX line would silently lose to the first).
+run_case "env names the other mux" ENVFILE="COLLIE_MUX=herdr" -- --tailscale --mux herdr-core --yes
+expect_rc 0
+expect_env_line "COLLIE_MUX=herdr-core"
+expect_no_env_line "COLLIE_MUX=herdr"
+expect_called "collie restart"
+expect_order "collie start" "collie restart"
+expect_out "COLLIE_MUX"
+run_case "env names the other mux, other lines stay" ENVFILE="# mine
+COLLIE_PORT=8790
+COLLIE_MUX=herdr
+COLLIE_X=1" -- --tailscale --mux herdr-core --yes
+expect_rc 0
+expect_env_line "# mine"
+expect_env_line "COLLIE_PORT=8790"
+expect_env_line "COLLIE_MUX=herdr-core"
+expect_env_line "COLLIE_X=1"
+run_case "env names the other mux, quoted" ENVFILE='COLLIE_MUX="herdr"' -- --tailscale --mux herdr-core --yes
+expect_rc 0
+expect_env_line "COLLIE_MUX=herdr-core"
+run_case "env names the other mux, exported" ENVFILE="export COLLIE_MUX=herdr" -- --tailscale --mux herdr-core --yes
+expect_rc 0
+expect_env_line "COLLIE_MUX=herdr-core"
+expect_no_env "export COLLIE_MUX"
+run_case "env names the same mux" ENVFILE="COLLIE_MUX=herdr-core" -- --tailscale --mux herdr-core --yes
+expect_rc 0
+expect_env_line "COLLIE_MUX=herdr-core"
+expect_not_called "collie restart"
+run_case "env names the other mux, dry run" ENVFILE="COLLIE_MUX=herdr" -- --tailscale --mux herdr-core --dry-run
+expect_rc 0
+expect_out "from herdr to herdr-core"
+expect_env_line "COLLIE_MUX=herdr"
+run_case "env names the other mux, declined" ENVFILE="COLLIE_MUX=herdr" ASK=n -- --tailscale --mux herdr-core
+expect_rc 6
+expect_env_line "COLLIE_MUX=herdr"
+expect_not_called "collie start"
+
+# Collie ends up driving something else than what was asked for (a setting from somewhere the script cannot see): stop,
+# before a phone is paired with the wrong thing.
+run_case "collie reports another mux" STUB_MUX_REPORT=herdr -- --tailscale --mux herdr-core --yes
+expect_rc 3
+expect_out "herdr"
+expect_out "not herdr-core"
+expect_not_called "collie pair"
 
 # ---- shellcheck, when it is there -----------------------------------------------------------------------------------------
 if command -v shellcheck >/dev/null 2>&1; then
