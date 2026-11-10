@@ -6,6 +6,8 @@
 #   2. `collie start`: runs Collie in the background and publishes it on your tailnet;
 #   3. check that Collie answers on this computer and on its Tailscale address;
 #   4. `collie pair`, last of all, so the one-time code has all of its ten minutes left.
+# A tailnet without HTTPS certificates (Headscale, for one) is handled too: with your agreement (or --http) the script adds
+# one line, COLLIE_SERVE_MODE=http, to Collie's own .env, so Collie is published over plain http inside the tailnet.
 #
 # Run it:        curl -fsSL https://raw.githubusercontent.com/mithyer/dogr/main/setup.sh | sh
 # Options go after `-s --`:   ... | sh -s -- --tailscale --yes
@@ -33,6 +35,14 @@ main() {
     ROUTE=
     ASSUME_YES=0
     DRY_RUN=0
+    # 1 when plain http inside the tailnet was asked for on the command line (--http) or agreed to at the question
+    HTTP_OK=0
+    # 1 once this run has added COLLIE_SERVE_MODE=http to Collie's .env
+    SWITCHED=0
+    # 1 once the terminal is open on file descriptor 3, so every answer comes from the next line of it
+    TTY_OPEN=0
+    # the file Collie reads its settings from (a standalone install; see the README for installs that Herdr manages)
+    ENV_FILE=$HOME/.config/collie/.env
     WORK=
 
     # ---- small helpers --------------------------------------------------------------------------------------------
@@ -52,11 +62,15 @@ main() {
 
     usage() {
         cat <<'EOF'
-Usage: setup.sh [--tailscale] [--yes] [--dry-run] [--help]
+Usage: setup.sh [--tailscale] [--http] [--yes] [--dry-run] [--help]
 
 Puts Collie on this computer, publishes it on your Tailscale network, and shows a QR code that pairs your phone.
 
   --tailscale   You reach this computer through Tailscale (the only route available so far). Without it, the script asks.
+  --http        If your tailnet has no HTTPS certificates (Headscale, for one), publish Collie over plain http inside the
+                tailnet instead. Tailscale still encrypts the traffic between your devices. This adds the line
+                COLLIE_SERVE_MODE=http to Collie's .env. Without this option the script asks first, and with --yes
+                and no terminal it stops instead of switching by itself.
   --yes, -y     Do not ask before changing anything.
   --dry-run     Show what would happen, change nothing, and stop.
   --help, -h    Show this text.
@@ -66,14 +80,21 @@ EOF
     # have_tty: true when there is somewhere to read an answer from
     have_tty() { ( exec <"$TTY" ) 2>/dev/null; }
 
-    # ask_yes_no QUESTION: ask on the terminal, default yes. Returns 0 for yes, 1 for no.
+    # ask_yes_no QUESTION [DEFAULT]: ask on the terminal. DEFAULT is "y" (the default) or "n": what a bare Enter means.
+    # Returns 0 for yes, 1 for no. No answer at all (the terminal closed, or Ctrl-D) counts as "no": nothing is changed on a guess.
     ask_yes_no() {
-        printf '%s [Y/n] ' "$1" >&2
+        have_tty || return 1
+        # Open the terminal once: each question then reads the next line, also when the "terminal" is a file in a test.
+        if [ "$TTY_OPEN" != 1 ]; then
+            exec 3<"$TTY"
+            TTY_OPEN=1
+        fi
+        if [ "${2:-y}" = n ]; then printf '%s [y/N] ' "$1" >&2; else printf '%s [Y/n] ' "$1" >&2; fi
         answer=
-        # No answer at all (the terminal closed, or Ctrl-D) counts as "no": nothing is changed on a guess.
-        IFS= read -r answer 2>/dev/null <"$TTY" || return 1
+        IFS= read -r answer <&3 || return 1
         case $answer in
-            '' | [Yy]*) return 0 ;;
+            '') [ "${2:-y}" = y ] ;;
+            [Yy]*) return 0 ;;
             *) return 1 ;;
         esac
     }
@@ -120,12 +141,57 @@ EOF
         return 1
     }
 
+    # run_collie VERB: run `collie VERB` ("start" or "restart") with its output on screen and in $log; stop if it fails.
+    run_collie() {
+        { collie "$1" </dev/null 2>&1; echo $? >"$rcfile"; } | tee "$log"
+        collie_rc=$(cat "$rcfile" 2>/dev/null || echo 1)
+        if [ "$collie_rc" != 0 ]; then
+            die 4 "'collie $1' failed (exit $collie_rc). Its output is above; 'collie logs' has more."
+        fi
+    }
+
+    # switch_to_http: the tailnet has no HTTPS certificates. With the user's agreement (or --http), add one line to Collie's
+    # .env so Collie publishes over plain http inside the tailnet. Stops the script (exit 3) when the user does not agree,
+    # or when the .env already has a COLLIE_SERVE_MODE line that is not ours to change.
+    switch_to_http() {
+        say ""
+        say "Your tailnet has no HTTPS certificates (that is normal for Headscale)."
+        say "Collie can be published over plain http inside the tailnet instead. Tailscale still encrypts everything between"
+        say "your devices; only the address starts with http:// and Collie's web app cannot be added to a home screen."
+        say "This adds one line, COLLIE_SERVE_MODE=http, to $ENV_FILE."
+        if [ "$HTTP_OK" != 1 ]; then
+            # Going from https to http is a step down, so it is never taken silently: --yes alone is not enough.
+            if [ "$ASSUME_YES" = 1 ] || ! have_tty; then
+                say "To do that, run this command again with --http."
+                exit 3
+            fi
+            ask_yes_no "Publish over plain http inside the tailnet?" n || {
+                say "Nothing was changed. Turn on HTTPS certificates for your tailnet, or run this command again with --http."
+                exit 3
+            }
+            HTTP_OK=1
+        fi
+        if [ -f "$ENV_FILE" ] && grep -q '^[[:space:]]*COLLIE_SERVE_MODE=' "$ENV_FILE"; then
+            say "$ENV_FILE already has a COLLIE_SERVE_MODE line, so it is left alone."
+            say "Set it to COLLIE_SERVE_MODE=http there, then run this command again."
+            exit 3
+        fi
+        mkdir -p "${ENV_FILE%/*}" || die 3 "could not create ${ENV_FILE%/*}"
+        # The file may hold secrets of Collie's, so a file made here is private to the user (an existing one keeps its mode).
+        (
+            umask 077
+            printf '\n# Added by dogr setup.sh: this tailnet has no HTTPS certificates, so Collie is published over plain http.\nCOLLIE_SERVE_MODE=http\n' >>"$ENV_FILE"
+        ) || die 3 "could not write $ENV_FILE"
+        SWITCHED=1
+    }
+
     # ---- steps ----------------------------------------------------------------------------------------------------
 
     # Read the command line.
     while [ $# -gt 0 ]; do
         case $1 in
             --tailscale) ROUTE=tailscale ;;
+            --http) HTTP_OK=1 ;;
             --yes | -y) ASSUME_YES=1 ;;
             --dry-run) DRY_RUN=1 ;;
             --help | -h)
@@ -207,10 +273,14 @@ EOF
     say "==> Starting Collie"
     log=$WORK/start.log
     rcfile=$WORK/start.rc
-    { collie start </dev/null 2>&1; echo $? >"$rcfile"; } | tee "$log"
-    start_rc=$(cat "$rcfile" 2>/dev/null || echo 1)
-    if [ "$start_rc" != 0 ]; then
-        die 4 "'collie start' failed (exit $start_rc). Its output is above; 'collie logs' has more."
+    run_collie start
+    # One finding has a way out that this script can take: a tailnet without HTTPS certificates. Any other finding, or this one
+    # together with another, is for the person to fix first.
+    if [ "$(grep -c '^ *setup:' "$log")" = 1 ] && grep -q 'HTTPS certificates are off for your tailnet' "$log"; then
+        switch_to_http
+        say ""
+        say "==> Restarting Collie"
+        run_collie restart
     fi
     if grep -q '^ *setup:' "$log"; then
         say ""
@@ -234,6 +304,18 @@ EOF
         say "Run 'collie doctor' and fix what it names, then run this command again."
         exit 3
     fi
+    if [ "$SWITCHED" = 1 ]; then
+        case $phone_url in
+            http://*) ;;
+            *)
+                say ""
+                say "Collie still gives an https:// address, so it did not pick up COLLIE_SERVE_MODE=http."
+                say "It may read its settings from another folder (for example when Herdr manages it). Put that line in the .env"
+                say "that Collie really uses, run 'collie restart', then run this command again."
+                exit 3
+                ;;
+        esac
+    fi
     if retry health_ok "$phone_url"; then
         say "  on Tailscale:     $phone_url answers"
     else
@@ -254,6 +336,9 @@ EOF
     say "On your phone: open Herdogr, tap +, then 'Scan QR code' and point the camera at the code above."
     say "No camera? Paste the link above into the Address field, or type the address and the code."
     say "The code works once and for ${minutes:-a few} minutes. For a new one, run: collie pair"
+    if [ "$SWITCHED" = 1 ]; then
+        say "The address starts with http://. Tailscale encrypts the traffic between your devices; the address is just not HTTPS."
+    fi
     exit 0
 }
 

@@ -33,6 +33,7 @@ that. The script is one file, about 260 lines: [setup.sh](setup.sh).
 | Route | Status |
 | --- | --- |
 | Tailscale (HTTPS on your tailnet, nothing exposed to the internet) | Scripted. This is what `setup.sh` does. |
+| Tailscale or Headscale without HTTPS certificates (address starts with `http://`) | Scripted, only when you agree or pass `--http`. Traffic is still encrypted by Tailscale between your devices; the address is just not HTTPS. |
 | Your own domain behind a reverse proxy | Not scripted yet. See Collie's `docs/deployment.md`. |
 | Local network without encryption | Not scripted yet, and not recommended. |
 
@@ -50,7 +51,8 @@ curl -fsSL https://raw.githubusercontent.com/mithyer/dogr/main/setup.sh | sh -s 
 | Option | Meaning |
 | --- | --- |
 | `--tailscale` | Answer the first question for you. |
-| `--yes`, `-y` | Do not ask before changing anything. Needed when there is no terminal. |
+| `--yes`, `-y` | Do not ask before changing anything. Needed when there is no terminal. Does not agree to `http://` addresses; use `--http` for that. |
+| `--http` | If your tailnet has no HTTPS certificates, switch Collie to `http://` addresses (`COLLIE_SERVE_MODE=http`) without asking. |
 | `--dry-run` | Say what would happen, change nothing, stop. |
 | `--help`, `-h` | Show the usage text. |
 
@@ -68,7 +70,7 @@ curl -fsSL https://raw.githubusercontent.com/mithyer/dogr/main/setup.sh | sh -s 
 | 0 | Done (or a dry run, or `--help`). | Scan the code. |
 | 1 | Wrong use, unsupported computer, or no terminal to ask on. | Read the message; add `--yes` when there is no terminal. |
 | 2 | The route you chose is not scripted yet. | Set it up by hand with Collie's guide. |
-| 3 | Collie runs, but something it needs is missing (for example Tailscale not signed in, or HTTPS not enabled). | Do what the `fix:` lines say, then run the command again. |
+| 3 | Collie runs, but something it needs is missing (for example Tailscale not signed in, or HTTPS not enabled and `http://` not agreed to), or your `COLLIE_SERVE_MODE` setting could not be used. | Do what the message says, then run the command again. |
 | 4 | Collie did not start, or does not answer. | `collie logs`. |
 | 5 | Collie could not be downloaded or installed. | Read the installer's output above the message. |
 | 6 | You answered no at the question. | Nothing was changed. |
@@ -82,10 +84,11 @@ Only what Collie's own commands change:
 | Collie's program files | `~/.local/share/collie` (or `$COLLIE_DIR`), and a `collie` link in `~/.local/bin` |
 | Collie's settings and state | `~/.config/collie`, `~/.local/state/collie` |
 | A background service that runs Collie | a launchd agent on macOS, a `systemd --user` unit on Linux |
-| A Tailscale front door | `tailscale serve`: HTTPS on port 443 of your tailnet name, forwarded to `127.0.0.1:8787` |
+| A Tailscale front door | `tailscale serve`: HTTPS on port 443 of your tailnet name, forwarded to `127.0.0.1:8787` (with `--http`: plain HTTP on port 8787 of your tailnet name) |
+| One line, only when the tailnet has no HTTPS certificates and you agreed | `COLLIE_SERVE_MODE=http` appended to `~/.config/collie/.env` (file mode 600). If the file already sets `COLLIE_SERVE_MODE`, the script stops and leaves it alone. |
 | A one-time pairing code, and later the paired devices | `~/.local/state/collie` (or `$COLLIE_STATE_DIR`); only hashes are kept |
 
-The script writes nothing of its own except a temporary folder, which it removes when it ends. Nothing needs `sudo`.
+Apart from the one `.env` line above, the script writes nothing of its own except a temporary folder, which it removes when it ends. Nothing needs `sudo`.
 
 ## Undo
 
@@ -96,6 +99,8 @@ collie uninstall          # stops the service, removes the launchd/systemd entry
 collie unlink             # removes the ~/.local/bin/collie link
 rm -rf ~/.local/share/collie   # removes the program files (or $COLLIE_DIR)
 ```
+
+If you chose `http://`, also delete the `COLLIE_SERVE_MODE=http` line (and the comment above it) from `~/.config/collie/.env`, then run `collie restart`.
 
 To forget a paired phone without removing Collie, run `collie devices list`, then `collie devices revoke <label>`. To stop Collie for now and keep everything, run
 `collie stop`.
@@ -109,7 +114,8 @@ sh tests/run.sh
 The tests run `setup.sh` against a stub `curl` and a stub `collie`, each case in its own empty home folder. They cover the
 normal path, running twice, `--dry-run`, installing first, a failed download or installer, Collie naming a missing setup step,
 no Tailscale address, Collie not answering, the Tailscale address not answering from this computer, a failed start, a QR
-code that could not be drawn, answering at the terminal, no terminal, wrong options, running through a pipe, and a download
+code that could not be drawn, a tailnet without HTTPS certificates (agreed, declined, `--http`, an existing `.env`, a setting
+Collie does not pick up), answering at the terminal, no terminal, wrong options, running through a pipe, and a download
 that stops half way. `shellcheck` runs too when it is installed.
 
 ## What has and has not been checked
@@ -118,7 +124,8 @@ that stops half way. `shellcheck` runs too when it is installed.
 | --- | --- |
 | The logic of every step and every exit code | `tests/run.sh`, with stubs |
 | The shape of Collie's `start`, `status --json` and `pair` output the script reads | Read from Collie's source |
-| A real `collie start` with a real Tailscale | Not yet |
+| That `COLLIE_SERVE_MODE=http` in `~/.config/collie/.env` turns the address from `https://name` into `http://name:8787` | Real `collie status --json` in an empty home folder |
+| A real `collie start` with a real Tailscale, with or without HTTPS certificates | Not yet |
 | Windows | Not supported. Use Collie's own Windows guide. |
 
 ## Limits

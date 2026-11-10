@@ -70,17 +70,29 @@ cat >"$STUBS/collie" <<'EOF'
 echo "collie $*" >>"$STUB_LOG"
 case $1 in
     version) echo "collie 1.27.0" ;;
-    start)
+    start | restart)
         [ "${STUB_START_RC:-0}" = 0 ] || { echo "start went wrong"; exit "$STUB_START_RC"; }
         echo "  ✓ Collie is running · v1.27.0"
         if [ -n "${STUB_SETUP:-}" ]; then
             echo "  setup: $STUB_SETUP"
             echo "    fix: do the thing it says"
         fi
+        # A tailnet without HTTPS certificates: the finding goes away once the .env says http. With
+        # STUB_IGNORE_ENV Collie still reports it on `start` but is quiet after `restart`, yet keeps
+        # giving the https address (the setting was not really picked up).
+        if [ "${STUB_NO_CERTS:-0}" = 1 ] && ! grep -q '^COLLIE_SERVE_MODE=http$' "$HOME/.config/collie/.env" 2>/dev/null \
+            && ! { [ "$1" = restart ] && [ "${STUB_IGNORE_ENV:-0}" = 1 ]; }; then
+            echo "  setup: HTTPS certificates are off for your tailnet"
+            echo "    fix: turn on HTTPS in the admin console, or use COLLIE_SERVE_MODE=http"
+        fi
         ;;
     status)
+        phone=$STUB_PHONE_JSON
+        if [ "${STUB_NO_CERTS:-0}" = 1 ] && [ "${STUB_IGNORE_ENV:-0}" != 1 ] && grep -q '^COLLIE_SERVE_MODE=http$' "$HOME/.config/collie/.env" 2>/dev/null; then
+            phone='"http://mb17.headnet.example:8787"'
+        fi
         printf '{"running":true,"version":"1.27.0","instance":"default","port":8787,"localUrl":"%s","phoneUrl":%s,"pairedDevices":0}\n' \
-            "$STUB_LOCAL_URL" "$STUB_PHONE_JSON"
+            "$STUB_LOCAL_URL" "$phone"
         ;;
     pair)
         echo "ABCD2345"
@@ -121,7 +133,8 @@ quote() {
 # Each WORD before "--" is one of:
 #   NAME=value        an environment variable for the run (the stubs read STUB_* and setup.sh reads DOGR_*)
 #   COLLIE_INSTALLED=0  a computer that has no Collie yet
-#   ASK=text          what the person types when the script asks a question
+#   ASK=a,b,c         what the person types at each question, in order, one answer per comma (an empty answer is a bare Enter)
+#   ENVFILE=text      a Collie .env file that is already there
 #   PIPE=1            the whole script arrives through a pipe, the way `curl ... | sh` runs it
 #   CUT=1             like PIPE=1 but the download stops half way
 run_case() {
@@ -147,11 +160,13 @@ run_case() {
     } >"$wrapper"
     installed=1
     ask=
+    envfile=
     mode="file"
     while [ $# -gt 0 ] && [ "$1" != "--" ]; do
         case $1 in
             COLLIE_INSTALLED=0) installed=0 ;;
             ASK=*) ask=${1#ASK=} ;;
+            ENVFILE=*) envfile=${1#ENVFILE=} ;;
             PIPE=1) mode="pipe" ;;
             CUT=1) mode="cut" ;;
             *=*) printf 'export %s=%s\n' "${1%%=*}" "$(quote "${1#*=}")" >>"$wrapper" ;;
@@ -163,7 +178,11 @@ run_case() {
     cp "$STUBS/curl" "$sandbox/path/curl"
     if [ "$installed" = 1 ]; then cp "$STUBS/collie" "$sandbox/path/collie"; fi
     # With no ASK there is no terminal at all: DOGR_TTY keeps pointing at a file that does not exist.
-    if [ -n "$ask" ]; then printf '%s\n' "$ask" >"$sandbox/tty"; fi
+    if [ -n "$ask" ]; then printf '%s\n' "$ask" | tr ',' '\n' >"$sandbox/tty"; fi
+    if [ -n "$envfile" ]; then
+        mkdir -p "$sandbox/home/.config/collie"
+        printf '%s\n' "$envfile" >"$sandbox/home/.config/collie/.env"
+    fi
     case $mode in
         file) OUT=$(
             env -i /bin/sh "$wrapper" "$SETUP" "$@" 2>&1 </dev/null
@@ -200,6 +219,9 @@ expect_no_out() { if printf '%s\n' "$OUT" | grep -qF -- "$1"; then bad "output h
 # expect_called TEXT / expect_not_called TEXT: the stubs saw / never saw a call that has that text
 expect_called() { if grep -qF -- "$1" "$LOG"; then ok; else bad "no call: $1"; fi; }
 expect_not_called() { if grep -qF -- "$1" "$LOG"; then bad "unexpected call: $1"; else ok; fi; }
+# expect_env TEXT / expect_no_env: Collie's .env in the sandbox has / lacks that text
+expect_env() { if grep -qF -- "$1" "$sandbox/home/.config/collie/.env" 2>/dev/null; then ok; else bad ".env lacks: $1"; fi; }
+expect_no_env() { if grep -qF -- "$1" "$sandbox/home/.config/collie/.env" 2>/dev/null; then bad ".env has: $1"; else ok; fi; }
 # expect_order A B: the first call with A comes before the first call with B
 expect_order() {
     a=$(grep -nF -- "$1" "$LOG" | head -n 1 | cut -d: -f1)
@@ -347,6 +369,86 @@ run_case "help" -- --help
 expect_rc 0
 expect_out "Usage: setup.sh"
 expect_not_called "collie"
+
+# ---- a tailnet without HTTPS certificates (Headscale) ----
+# --http answers the question: the .env gets the line, Collie restarts, and the address shown is http://
+run_case "no certificates, --http" STUB_NO_CERTS=1 -- --tailscale --http --yes
+expect_rc 0
+expect_out "no HTTPS certificates"
+expect_env "COLLIE_SERVE_MODE=http"
+expect_called "collie restart"
+expect_called "health http://mb17.headnet.example:8787/api/health"
+expect_order "collie start" "collie restart"
+expect_order "collie restart" "collie status --json"
+expect_order "collie restart" "collie pair"
+expect_out "The address starts with http://"
+
+# Asked at the terminal: Continue? yes, plain http? yes.
+run_case "no certificates, agreed at the question" STUB_NO_CERTS=1 ASK=y,y -- --tailscale
+expect_rc 0
+expect_env "COLLIE_SERVE_MODE=http"
+expect_called "collie pair"
+
+# Asked at the terminal: Continue? yes, plain http? no. Nothing is written and nothing is paired.
+run_case "no certificates, declined" STUB_NO_CERTS=1 ASK=y,n -- --tailscale
+expect_rc 3
+expect_out "Nothing was changed."
+expect_no_env "COLLIE_SERVE_MODE"
+expect_not_called "collie restart"
+expect_not_called "collie pair"
+
+# A bare Enter at that question means no (going down to http is never the default).
+run_case "no certificates, bare Enter" STUB_NO_CERTS=1 ASK=y, -- --tailscale
+expect_rc 3
+expect_no_env "COLLIE_SERVE_MODE"
+expect_not_called "collie pair"
+
+# --yes alone is not enough to switch: it stops and names the option.
+run_case "no certificates, --yes only" STUB_NO_CERTS=1 -- --tailscale --yes
+expect_rc 3
+expect_out "--http"
+expect_no_env "COLLIE_SERVE_MODE"
+expect_not_called "collie restart"
+expect_not_called "collie pair"
+
+# The .env is created private to the user.
+run_case "no certificates, file mode" STUB_NO_CERTS=1 -- --tailscale --http --yes
+if [ -n "$(find "$sandbox/home/.config/collie/.env" -perm 600)" ]; then ok; else bad ".env is not private (mode 600)"; fi
+
+# An .env that already has other lines keeps them, and gets the new line after them.
+run_case "no certificates, existing .env" STUB_NO_CERTS=1 ENVFILE=COLLIE_PORT=9999 -- --tailscale --http --yes
+expect_rc 0
+expect_env "COLLIE_PORT=9999"
+expect_env "COLLIE_SERVE_MODE=http"
+
+# A COLLIE_SERVE_MODE the person set already is not ours to change.
+run_case "no certificates, serve mode already set" STUB_NO_CERTS=1 ENVFILE=COLLIE_SERVE_MODE=https -- --tailscale --http --yes
+expect_rc 3
+expect_out "already has a COLLIE_SERVE_MODE line"
+expect_env "COLLIE_SERVE_MODE=https"
+expect_not_called "collie restart"
+expect_not_called "collie pair"
+
+# Another problem next to the missing certificates: nothing is switched, the person fixes the other thing first.
+run_case "no certificates and another problem" STUB_NO_CERTS=1 STUB_SETUP="Tailscale is not signed in" -- --tailscale --http --yes
+expect_rc 3
+expect_out "setup: Tailscale is not signed in"
+expect_no_env "COLLIE_SERVE_MODE"
+expect_not_called "collie restart"
+expect_not_called "collie pair"
+
+# Collie did not take the setting (it reads its settings elsewhere): say so instead of showing an https:// code.
+run_case "setting not picked up" STUB_NO_CERTS=1 STUB_IGNORE_ENV=1 -- --tailscale --http --yes
+expect_rc 3
+expect_out "did not pick up COLLIE_SERVE_MODE=http"
+expect_not_called "collie pair"
+
+# --http on a tailnet that has certificates changes nothing.
+run_case "--http with certificates" -- --tailscale --http --yes
+expect_rc 0
+expect_no_env "COLLIE_SERVE_MODE"
+expect_not_called "collie restart"
+expect_no_out "The address starts with http://"
 
 # It also works the way people run it: the whole script arrives through a pipe.
 run_case "through a pipe" PIPE=1 -- --tailscale --yes
