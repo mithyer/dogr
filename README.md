@@ -125,6 +125,7 @@ that stops half way. `shellcheck` runs too when it is installed.
 | The logic of every step and every exit code | `tests/run.sh`, with stubs |
 | The shape of Collie's `start`, `status --json` and `pair` output the script reads | Read from Collie's source |
 | That `COLLIE_SERVE_MODE=http` in `~/.config/collie/.env` turns the address from `https://name` into `http://name:8787` | Real `collie status --json` in an empty home folder |
+| The script runs on macOS 15 (Intel) over ssh: `--help`, `--dry-run`, no terminal, unknown option, "no" at the route question, "no" at the confirmation. Each exits with the documented code and changes nothing | Run once on a spare Mac, 2026-11-10 |
 | A real `collie start` with a real Tailscale, with or without HTTPS certificates | Not yet |
 | Windows | Not supported. Use Collie's own Windows guide. |
 
