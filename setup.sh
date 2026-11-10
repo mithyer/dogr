@@ -83,8 +83,8 @@ Puts Collie on this computer, publishes it on your Tailscale network, and shows 
 
   --tailscale   You reach this computer through Tailscale (the only route available so far). Without it, the script asks.
   --mux NAME    The terminal program Collie drives: herdr (the terminal app) or herdr-core (a background service). One
-                that is missing is installed with its own installer. Without this option the script uses the one that is
-                installed, and asks when both or neither are. If Collie's .env names the other one, the plan says so and
+                that is missing is installed with its own installer. Without this option the script asks which one, and
+                stops when there is no terminal to ask on. If Collie's .env names the other one, the plan says so and
                 that line is replaced.
   --http        If your tailnet has no HTTPS certificates (Headscale, for one), publish Collie over plain http inside the
                 tailnet instead. Tailscale still encrypts the traffic between your devices. This adds the line
@@ -202,10 +202,15 @@ EOF
     # ask_mux: ask which terminal program Collie should drive and set MUX. Stops (exit 1) on an answer that is none of them.
     ask_mux() {
         open_tty || die 1 "there is no terminal to ask on. Run again with --mux herdr or --mux herdr-core."
+        # Say which of the two is installed already, so the answer is an informed one.
+        mark_herdr=
+        mark_hc=
+        if [ "$have_herdr" = 1 ]; then mark_herdr="  (installed)"; fi
+        if [ "$have_hc" = 1 ]; then mark_hc="  (installed)"; fi
         {
             printf '%s\n' "Which terminal program should Collie drive?"
-            printf '%s\n' "  1) herdr       the terminal app: you open it in a terminal and your agents run inside it"
-            printf '%s\n' "  2) herdr-core  a background service: no terminal app to open"
+            printf '%s\n' "  1) herdr       the terminal app: you open it in a terminal and your agents run inside it$mark_herdr"
+            printf '%s\n' "  2) herdr-core  a background service: no terminal app to open$mark_hc"
             printf '%s' "Enter 1 or 2: "
         } >&2
         answer=
@@ -346,22 +351,14 @@ EOF
         fi
     fi
 
-    # Which terminal program does Collie drive? The one named, else the only one that is installed, else ask.
+    # Which terminal program does Collie drive? The one named with --mux, else ask (the question marks what is installed).
     have_herdr=0
     have_hc=0
     if find_herdr; then have_herdr=1; fi
     if find_hc; then have_hc=1; fi
     if [ -z "$MUX" ]; then
-        if [ "$have_herdr" = 1 ] && [ "$have_hc" = 0 ]; then
-            MUX=herdr
-            say "Found herdr on this computer, so Collie will drive it (use --mux herdr-core to pick the other)."
-        elif [ "$have_hc" = 1 ] && [ "$have_herdr" = 0 ]; then
-            MUX=herdr-core
-            say "Found herdr-core on this computer, so Collie will drive it (use --mux herdr to pick the other)."
-        else
-            have_tty || die 1 "there is no terminal to ask which terminal program Collie should drive. Run again with --mux herdr or --mux herdr-core."
-            ask_mux
-        fi
+        have_tty || die 1 "there is no terminal to ask which terminal program Collie should drive. Run again with --mux herdr or --mux herdr-core."
+        ask_mux
     fi
     if [ "$MUX" = herdr ]; then
         MUX_URL=${DOGR_HERDR_INSTALL_URL:-https://herdr.dev/install.sh}

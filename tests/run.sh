@@ -217,6 +217,7 @@ run_case() {
     installed=1
     hc_installed=1
     herdr_installed=0
+    muxask=0
     ask=
     envfile=
     mode="file"
@@ -225,6 +226,7 @@ run_case() {
             COLLIE_INSTALLED=0) installed=0 ;;
             HC_INSTALLED=0) hc_installed=0 ;;
             HERDR_INSTALLED=1) herdr_installed=1 ;;
+            MUXASK=1) muxask=1 ;;
             ASK=*) ask=${1#ASK=} ;;
             ENVFILE=*) envfile=${1#ENVFILE=} ;;
             PIPE=1) mode="pipe" ;;
@@ -234,6 +236,11 @@ run_case() {
         shift
     done
     [ "${1:-}" = "--" ] && shift
+    # Every case names the terminal program, as the app's command does, unless the case is about the question itself (MUXASK=1)
+    # or names one of its own.
+    if [ "$muxask" != 1 ]; then
+        case " $* " in *" --mux"*) ;; *) set -- --mux herdr-core "$@" ;; esac
+    fi
     echo 'exec sh "$@"' >>"$wrapper"
     cp "$STUBS/curl" "$sandbox/path/curl"
     if [ "$installed" = 1 ]; then cp "$STUBS/collie" "$sandbox/path/collie"; fi
@@ -527,8 +534,11 @@ expect_not_called "curl"
 
 # ---- the terminal program: herdr or herdr-core ------------------------------------------------------------------------------
 
-# Only herdr-core is installed and no --mux is given: it is the obvious one. It is started, and Collie is told to drive it.
-run_case "mux found: only herdr-core" -- --tailscale --yes
+# No --mux: the script asks, and says which of the two is installed. The answer decides; it is started, and Collie is told to
+# drive it.
+run_case "mux asked: herdr-core, the only one installed" MUXASK=1 ASK=2 -- --tailscale --yes
+expect_out "(installed)"
+expect_out "Which terminal program"
 expect_rc 0
 expect_called "hc server start"
 expect_called "collie start [mux=herdr-core]"
@@ -536,8 +546,8 @@ expect_order "hc server start" "collie start"
 expect_env_line "COLLIE_MUX=herdr-core"
 expect_out "herdr-core"
 
-# Only herdr is installed and it runs: no start command is needed (herdr has none without a terminal), Collie drives it.
-run_case "mux found: only herdr" HC_INSTALLED=0 HERDR_INSTALLED=1 STUB_HERDR_RUNNING=1 -- --tailscale --yes
+# herdr is the answer and it runs: no start command is needed (herdr has none without a terminal), Collie drives it.
+run_case "mux asked: herdr, the only one installed" MUXASK=1 ASK=1 HC_INSTALLED=0 HERDR_INSTALLED=1 STUB_HERDR_RUNNING=1 -- --tailscale --yes
 expect_rc 0
 expect_called "herdr status server"
 expect_called "collie start [mux=herdr]"
@@ -618,26 +628,35 @@ expect_rc 0
 expect_out "herdr-core is already installed"
 expect_not_called "hc server start"
 
-# Nothing says which one: ask when both or neither are installed, and never guess without a terminal.
-run_case "ask: no terminal" HERDR_INSTALLED=1 -- --tailscale --yes
+# Nothing says which one: the script asks, whatever is installed, and never guesses without a terminal.
+run_case "ask: no terminal, one installed" MUXASK=1 -- --tailscale --yes
 expect_rc 1
 expect_out "--mux"
 expect_not_called "collie start"
-run_case "ask: neither installed, no terminal" HC_INSTALLED=0 -- --tailscale --yes
+run_case "ask: no terminal, both installed" MUXASK=1 HERDR_INSTALLED=1 -- --tailscale --yes
 expect_rc 1
 expect_out "--mux"
-run_case "ask: second answer" HERDR_INSTALLED=1 ASK=2 -- --tailscale --yes
+expect_not_called "collie start"
+run_case "ask: neither installed, no terminal" MUXASK=1 HC_INSTALLED=0 -- --tailscale --yes
+expect_rc 1
+expect_out "--mux"
+run_case "ask: nothing installed is not marked" MUXASK=1 HC_INSTALLED=0 ASK=2 -- --tailscale --yes
+expect_no_out "(installed)"
+run_case "ask: second answer" MUXASK=1 HERDR_INSTALLED=1 ASK=2 -- --tailscale --yes
 expect_rc 0
 expect_called "collie start [mux=herdr-core]"
-run_case "ask: first answer" HERDR_INSTALLED=1 STUB_HERDR_RUNNING=1 ASK=1 -- --tailscale --yes
+run_case "ask: first answer" MUXASK=1 HERDR_INSTALLED=1 STUB_HERDR_RUNNING=1 ASK=1 -- --tailscale --yes
 expect_rc 0
 expect_called "collie start [mux=herdr]"
-run_case "ask: by name" HERDR_INSTALLED=1 ASK=herdr-core -- --tailscale --yes
+run_case "ask: by name" MUXASK=1 HERDR_INSTALLED=1 ASK=herdr-core -- --tailscale --yes
 expect_rc 0
 expect_called "collie start [mux=herdr-core]"
-run_case "ask: nonsense" HERDR_INSTALLED=1 ASK=maybe -- --tailscale --yes
+run_case "ask: nonsense" MUXASK=1 HERDR_INSTALLED=1 ASK=maybe -- --tailscale --yes
 expect_rc 1
 expect_not_called "collie start"
+run_case "ask: the route question comes first" MUXASK=1 ASK=y,2 -- --yes
+expect_rc 0
+expect_called "collie start [mux=herdr-core]"
 
 # A wrong --mux value is refused, with the usage.
 run_case "mux unknown value" -- --tailscale --mux tmux --yes

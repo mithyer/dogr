@@ -22,8 +22,9 @@ The script first says what it is about to do and asks once. Then it:
 4. checks that Collie answers on this computer and on its Tailscale address, and that it drives the program you picked;
 5. runs `collie pair` last, so the one-time code still has all of its ten minutes left, and shows it as a QR code.
 
-Which terminal program? `--mux herdr` or `--mux herdr-core` decides. Without it the script uses the one that is installed, and
-asks when both or neither are. The Herdogr app shows the same choice next to the command, so you can copy the right one.
+Which terminal program? `--mux herdr` or `--mux herdr-core` decides. Without it the script asks, and marks the one that is
+already installed; with no terminal to ask on it stops and tells you to add `--mux`. The Herdogr app shows the same choice next
+to the command, so the command you copy already has it.
 
 On your phone: open Herdogr, tap `+`, tap **Scan QR code**, and point the camera at the code. The scan only fills in the form;
 you still tap **Pair and add** yourself.
@@ -57,7 +58,7 @@ curl -fsSL https://raw.githubusercontent.com/mithyer/dogr/main/setup.sh | sh -s 
 | Option | Meaning |
 | --- | --- |
 | `--tailscale` | Answer the first question for you. |
-| `--mux herdr` or `--mux herdr-core` | The terminal program Collie drives. Without it: the one that is installed, else a question. A program that is missing is installed after you agree to the plan. |
+| `--mux herdr` or `--mux herdr-core` | The terminal program Collie drives. Without it the script asks (and stops when there is no terminal to ask on). A program that is missing is installed after you agree to the plan. |
 | `--yes`, `-y` | Do not ask before changing anything. Needed when there is no terminal. Does not agree to `http://` addresses; use `--http` for that. |
 | `--http` | If your tailnet has no HTTPS certificates, switch Collie to `http://` addresses (`COLLIE_SERVE_MODE=http`) without asking. |
 | `--dry-run` | Say what would happen, change nothing, stop. |
@@ -125,7 +126,7 @@ The tests run `setup.sh` against a stub `curl`, `collie`, `hc` and `herdr`, each
 normal path, running twice, `--dry-run`, installing first, a failed download or installer, Collie naming a missing setup step,
 no Tailscale address, Collie not answering, the Tailscale address not answering from this computer, a failed start, a QR
 code that could not be drawn, a tailnet without HTTPS certificates (agreed, declined, `--http`, an existing `.env`, a setting
-Collie does not pick up), the terminal program (found, named, asked for, installed, not running, a failing installer or start, an
+Collie does not pick up), the terminal program (named, asked for, installed, not running, a failing installer or start, an
 `.env` that names the other one, Collie driving the wrong one), answering at the terminal, no terminal, wrong options, running through a pipe, and a download
 that stops half way. `shellcheck` runs too when it is installed.
 
