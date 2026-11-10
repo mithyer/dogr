@@ -19,7 +19,7 @@ CASE=
 # ---- the tools setup.sh may use (and the stub installer needs), linked into one folder -----------------------------------------------------------------
 BELT=$ROOT/belt
 mkdir -p "$BELT"
-for tool in sh sed grep head tail tr tee cat mktemp rm sleep uname cp mkdir chmod; do
+for tool in sh sed grep head tail tr tee cat mktemp rm sleep uname cp mkdir chmod awk; do
     found=$(command -v "$tool") || {
         echo "this test needs '$tool' and did not find it"
         exit 1
@@ -101,6 +101,10 @@ case $1 in
         if [ "${STUB_NO_CERTS:-0}" = 1 ] && [ "${STUB_IGNORE_ENV:-0}" != 1 ] && grep -q '^COLLIE_SERVE_MODE=http$' "$HOME/.config/collie/.env" 2>/dev/null; then
             phone='"http://mb17.headnet.example:8787"'
         fi
+        # Behind the operator's own front door (COLLIE_SKIP_SERVE=1) the phone's address is COLLIE_PUBLIC_URL.
+        if [ "${STUB_IGNORE_ENV:-0}" != 1 ] && grep -q '^COLLIE_SKIP_SERVE=1' "$HOME/.config/collie/.env" 2>/dev/null; then
+            phone="\"$(sed -n 's/^COLLIE_PUBLIC_URL=//p' "$HOME/.config/collie/.env" | tail -n 1)\""
+        fi
         # The .env wins over the environment, as in the real Collie; STUB_MUX_REPORT forces what it reports.
         mux=$(sed -n 's/^COLLIE_MUX=//p' "$HOME/.config/collie/.env" 2>/dev/null | tail -n 1)
         : "${mux:=${COLLIE_MUX:-herdr-core}}"
@@ -147,6 +151,37 @@ else
 fi
 EOF
 
+# ifconfig (macOS and older Linux): the computer's addresses. STUB_IFCONFIG_MODE: one (a home network address, the default),
+# two (a second private address on another interface), none (nothing a phone could reach). Every mode also lists addresses
+# that must never be offered: loopback, link-local, Tailscale and Docker.
+cat >"$STUBS/ifconfig" <<'EOF'
+#!/bin/sh
+echo "lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384"
+echo "	inet 127.0.0.1 netmask 0xff000000"
+echo "en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500"
+echo "	inet 169.254.57.68 netmask 0xffff0000 broadcast 169.254.255.255"
+echo "	inet6 fe80::1c2b:3d4e:5f60:7182%en0 prefixlen 64 secured scopeid 0xb"
+case ${STUB_IFCONFIG_MODE:-one} in
+    one | two) echo "	inet 192.168.1.20 netmask 0xffffff00 broadcast 192.168.1.255" ;;
+esac
+echo "utun0: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1280"
+echo "	inet 100.64.0.7 --> 100.64.0.7 netmask 0xffffffff"
+echo "docker0: flags=4099<UP,BROADCAST,MULTICAST> mtu 1500"
+echo "	inet 172.17.0.1 netmask 0xffff0000 broadcast 172.17.255.255"
+case ${STUB_IFCONFIG_MODE:-one} in
+    two)
+        echo "en11: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500"
+        echo "	inet 10.0.0.1 netmask 0xffffff00 broadcast 10.0.0.255"
+        ;;
+esac
+EOF
+# ip (Linux): the same idea in the words of `ip -o -4 addr show scope global`.
+cat >"$STUBS/ip" <<'EOF'
+#!/bin/sh
+echo "2: eth0    inet 192.168.1.30/24 brd 192.168.1.255 scope global dynamic eth0\       valid_lft 86389sec"
+echo "3: docker0    inet 172.17.0.1/16 brd 172.17.255.255 scope global docker0\       valid_lft forever"
+EOF
+
 # The installers of the two: each puts its stub where the real one goes.
 cat >"$STUBS/hc-installer.sh" <<'EOF'
 #!/bin/sh
@@ -166,7 +201,7 @@ mkdir -p "$HOME/.local/bin"
 cp "$STUB_HERDR" "$HOME/.local/bin/herdr"
 chmod +x "$HOME/.local/bin/herdr"
 EOF
-chmod +x "$STUBS/curl" "$STUBS/collie" "$STUBS/installer.sh" "$STUBS/hc" "$STUBS/herdr" "$STUBS/hc-installer.sh" "$STUBS/herdr-installer.sh"
+chmod +x "$STUBS/curl" "$STUBS/collie" "$STUBS/installer.sh" "$STUBS/hc" "$STUBS/herdr" "$STUBS/hc-installer.sh" "$STUBS/herdr-installer.sh" "$STUBS/ifconfig" "$STUBS/ip"
 
 # ---- the harness --------------------------------------------------------------------------------------------------------
 
@@ -187,6 +222,7 @@ quote() {
 #   COLLIE_INSTALLED=0  a computer that has no Collie yet
 #   ASK=a,b,c         what the person types at each question, in order, one answer per comma (an empty answer is a bare Enter)
 #   ENVFILE=text      a Collie .env file that is already there
+#   LINUX=1           a computer that lists its addresses with `ip` and has no `ifconfig`
 #   PIPE=1            the whole script arrives through a pipe, the way `curl ... | sh` runs it
 #   CUT=1             like PIPE=1 but the download stops half way
 run_case() {
@@ -218,6 +254,7 @@ run_case() {
     hc_installed=1
     herdr_installed=0
     muxask=0
+    linux=0
     ask=
     envfile=
     mode="file"
@@ -227,6 +264,7 @@ run_case() {
             HC_INSTALLED=0) hc_installed=0 ;;
             HERDR_INSTALLED=1) herdr_installed=1 ;;
             MUXASK=1) muxask=1 ;;
+            LINUX=1) linux=1 ;;
             ASK=*) ask=${1#ASK=} ;;
             ENVFILE=*) envfile=${1#ENVFILE=} ;;
             PIPE=1) mode="pipe" ;;
@@ -246,6 +284,7 @@ run_case() {
     if [ "$installed" = 1 ]; then cp "$STUBS/collie" "$sandbox/path/collie"; fi
     if [ "$hc_installed" = 1 ]; then cp "$STUBS/hc" "$sandbox/path/hc"; fi
     if [ "$herdr_installed" = 1 ]; then cp "$STUBS/herdr" "$sandbox/path/herdr"; fi
+    if [ "$linux" = 1 ]; then cp "$STUBS/ip" "$sandbox/path/ip"; else cp "$STUBS/ifconfig" "$sandbox/path/ifconfig"; fi
     # With no ASK there is no terminal at all: DOGR_TTY keeps pointing at a file that does not exist.
     if [ -n "$ask" ]; then printf '%s\n' "$ask" | tr ',' '\n' >"$sandbox/tty"; fi
     if [ -n "$envfile" ]; then
@@ -408,10 +447,10 @@ run_case "ask both questions yes" ASK=y -- --yes
 expect_rc 0
 expect_called "collie pair"
 
-# Asking: "no" to Tailscale says the route is not scripted and changes nothing.
-run_case "not tailscale" ASK=n --
-expect_rc 2
-expect_out "Only the Tailscale route is scripted"
+# Asking: "no" to Tailscale leads to a second question; without an answer to it nothing happens.
+run_case "not tailscale, no second answer" ASK=n --
+expect_rc 1
+expect_out "no answer"
 expect_not_called "collie start"
 
 # Declining at "Continue?" leaves everything as it was.
@@ -710,6 +749,309 @@ expect_rc 3
 expect_out "herdr"
 expect_out "not herdr-core"
 expect_not_called "collie pair"
+
+# ==== the reverse proxy route: --proxy --url https://... ====================================================================
+
+# The usual road. The settings land in Collie's .env, Collie starts, the address Collie reports is the one given, and the
+# proxy is described, not set up.
+run_case "proxy: happy path" -- --proxy --url https://collie.example.com --yes
+expect_rc 0
+expect_env_line "COLLIE_SKIP_SERVE=1"
+expect_env_line "COLLIE_PUBLIC_HOSTS=collie.example.com"
+expect_env_line "COLLIE_ALLOWED_ORIGINS=https://collie.example.com"
+expect_env_line "COLLIE_PUBLIC_URL=https://collie.example.com"
+expect_not_called "tailscale"
+expect_called "collie start"
+expect_called "health http://127.0.0.1:8787/api/health"
+expect_called "health https://collie.example.com/api/health"
+expect_order "health https://collie.example.com" "collie pair"
+expect_out "reverse_proxy 127.0.0.1:8787"
+expect_out "ABCD2345"
+expect_out "https://"
+expect_no_out "tailnet"
+if [ "$(find "$sandbox/home/.config/collie/.env" -perm 600 2>/dev/null)" ]; then ok; else bad ".env is not private to the user"; fi
+
+# --url alone means the proxy route.
+run_case "proxy: --url alone" -- --url https://collie.example.com --yes
+expect_rc 0
+expect_env_line "COLLIE_PUBLIC_URL=https://collie.example.com"
+
+# A slash at the end is dropped, and the port 443 is the default one so it is not part of the host.
+run_case "proxy: trailing slash" -- --proxy --url https://collie.example.com/ --yes
+expect_rc 0
+expect_env_line "COLLIE_PUBLIC_URL=https://collie.example.com"
+run_case "proxy: port 443" -- --proxy --url https://collie.example.com:443 --yes
+expect_rc 0
+expect_env_line "COLLIE_PUBLIC_HOSTS=collie.example.com"
+expect_env_line "COLLIE_PUBLIC_URL=https://collie.example.com"
+
+# Another port stays: Collie compares the Host header as it arrives, port included.
+run_case "proxy: own port" -- --proxy --url https://collie.example.com:8443 --yes
+expect_rc 0
+expect_env_line "COLLIE_PUBLIC_HOSTS=collie.example.com:8443"
+expect_env_line "COLLIE_ALLOWED_ORIGINS=https://collie.example.com:8443"
+expect_env_line "COLLIE_PUBLIC_URL=https://collie.example.com:8443"
+
+# Addresses that cannot be right stop the script before anything changes.
+run_case "proxy: plain http" -- --proxy --url http://collie.example.com --yes
+expect_rc 1
+expect_out "https://"
+expect_not_called "collie start"
+expect_no_env "COLLIE_SKIP_SERVE"
+run_case "proxy: a path" -- --proxy --url https://collie.example.com/collie --yes
+expect_rc 1
+expect_out "path"
+expect_not_called "collie start"
+run_case "proxy: a user name" -- --proxy --url https://me@collie.example.com --yes
+expect_rc 1
+expect_not_called "collie start"
+run_case "proxy: odd characters" -- --proxy --url 'https://collie.example.com;rm' --yes
+expect_rc 1
+expect_not_called "collie start"
+run_case "proxy: no host" -- --proxy --url https:// --yes
+expect_rc 1
+expect_not_called "collie start"
+run_case "proxy: --url without a value" -- --proxy --url
+expect_rc 1
+expect_out "--url needs a value"
+run_case "proxy: no address and nobody to ask" -- --proxy --yes
+expect_rc 1
+expect_out "--url"
+expect_not_called "collie start"
+
+# Without --url the script asks for the address (and then for "Continue?").
+run_case "proxy: asks for the address" ASK=https://collie.example.com,y -- --proxy
+expect_rc 0
+expect_env_line "COLLIE_PUBLIC_URL=https://collie.example.com"
+expect_out "public address"
+
+# The first question leads here too: not Tailscale, then the reverse proxy (1), then the address, then "Continue?".
+run_case "proxy: through the route questions" ASK=n,1,https://collie.example.com,y --
+expect_rc 0
+expect_env_line "COLLIE_PUBLIC_URL=https://collie.example.com"
+run_case "proxy: a second answer that is no choice" ASK=n,7 --
+expect_rc 1
+expect_not_called "collie start"
+
+# One way at a time.
+run_case "two routes" -- --tailscale --proxy --url https://collie.example.com --yes
+expect_rc 1
+expect_out "one way"
+run_case "--url with the local network" -- --lan --url https://collie.example.com --yes
+expect_rc 1
+expect_out "one way"
+
+# --dry-run says what would be written and writes nothing.
+run_case "proxy: dry run" -- --proxy --url https://collie.example.com --dry-run
+expect_rc 0
+expect_out "COLLIE_PUBLIC_URL=https://collie.example.com"
+expect_out "Dry run: nothing was changed."
+expect_no_env "COLLIE_SKIP_SERVE"
+expect_not_called "collie start"
+
+# A setting that is there with another value is replaced where it stands; the other lines stay; Collie is restarted.
+run_case "proxy: old address replaced" ENVFILE="OTHER=1
+COLLIE_PUBLIC_URL=https://old.example.com" -- --proxy --url https://collie.example.com --yes
+expect_rc 0
+expect_env_line "COLLIE_PUBLIC_URL=https://collie.example.com"
+expect_no_env "old.example.com"
+expect_env_line "OTHER=1"
+expect_out "change  COLLIE_PUBLIC_URL from https://old.example.com to https://collie.example.com"
+expect_called "collie restart"
+expect_order "collie start" "collie restart"
+
+# A Collie that was set up for the local network binds to that address; behind a proxy it must be back on loopback.
+run_case "proxy: wide bind from an earlier run" ENVFILE="COLLIE_HOST=192.168.1.20" -- --proxy --url https://collie.example.com --yes
+expect_rc 0
+expect_env_line "COLLIE_HOST=127.0.0.1"
+run_case "proxy: loopback bind is left" ENVFILE="COLLIE_HOST=127.0.0.1" -- --proxy --url https://collie.example.com --yes
+expect_rc 0
+expect_env_line "COLLIE_HOST=127.0.0.1"
+
+# Everything is in place already: nothing is written, nothing restarts.
+run_case "proxy: already set up" ENVFILE="COLLIE_SKIP_SERVE=1
+COLLIE_PUBLIC_HOSTS=collie.example.com
+COLLIE_ALLOWED_ORIGINS=https://collie.example.com
+COLLIE_PUBLIC_URL=https://collie.example.com" -- --proxy --url https://collie.example.com --yes
+expect_rc 0
+expect_not_called "collie restart"
+expect_no_out "      add "
+expect_no_out "      change "
+expect_out "already"
+
+# A new install has nothing to restart.
+run_case "proxy: fresh install" COLLIE_INSTALLED=0 -- --proxy --url https://collie.example.com --yes
+expect_rc 0
+expect_not_called "collie restart"
+
+# The address does not answer from here: the proxy is described, no code is made, and the way on is said.
+run_case "proxy: front door does not answer" STUB_HEALTH_PHONE=down -- --proxy --url https://collie.example.com --yes
+expect_rc 3
+expect_out "https://collie.example.com"
+expect_out "does not answer"
+expect_out "reverse_proxy 127.0.0.1:8787"
+expect_out "collie pair"
+expect_not_called "collie pair"
+
+# Collie itself does not answer: stop.
+run_case "proxy: collie down" STUB_HEALTH_LOCAL=down -- --proxy --url https://collie.example.com --yes
+expect_rc 4
+expect_not_called "collie pair"
+
+# Collie did not read the settings: it still gives another address.
+run_case "proxy: settings not picked up" STUB_IGNORE_ENV=1 -- --proxy --url https://collie.example.com --yes
+expect_rc 3
+expect_out "did not pick up"
+expect_not_called "collie pair"
+
+# ==== the local network route: --lan [--host ADDRESS] ==========================================================================
+
+# One address that a phone could reach: it is used without asking.
+run_case "lan: happy path" STUB_LOCAL_URL=http://192.168.1.20:8787 -- --lan --yes
+expect_rc 0
+expect_env_line "COLLIE_HOST=192.168.1.20"
+expect_env_line "COLLIE_ALLOW_NON_LOOPBACK_BIND=1"
+expect_env_line "COLLIE_SKIP_SERVE=1"
+expect_env_line "COLLIE_PUBLIC_HOSTS=192.168.1.20:8787"
+expect_env_line "COLLIE_ALLOWED_ORIGINS=http://192.168.1.20:8787"
+expect_env_line "COLLIE_PUBLIC_URL=http://192.168.1.20:8787"
+expect_called "health http://192.168.1.20:8787/api/health"
+expect_called "collie pair"
+expect_order "health http://192.168.1.20:8787" "collie pair"
+expect_not_called "tailscale"
+expect_out "192.168.1.20"
+expect_out "not encrypted"
+expect_out "same network"
+expect_out "ABCD2345"
+if [ "$(find "$sandbox/home/.config/collie/.env" -perm 600 2>/dev/null)" ]; then ok; else bad ".env is not private to the user"; fi
+
+# The plan says plainly what this opens up, before the one question.
+run_case "lan: the plan names the risk" STUB_LOCAL_URL=http://192.168.1.20:8787 ASK=n -- --lan
+expect_rc 6
+expect_out "Anyone on your local network"
+expect_out "plain http"
+expect_not_called "collie start"
+expect_no_env "COLLIE_HOST"
+
+# Loopback, link-local, Tailscale and Docker addresses are never offered.
+run_case "lan: only reachable addresses are offered" STUB_LOCAL_URL=http://192.168.1.20:8787 -- --lan --dry-run
+expect_rc 0
+expect_no_out "127.0.0.1:"
+expect_no_out "169.254"
+expect_no_out "100.64"
+expect_no_out "172.17"
+
+# Two addresses and nobody to ask: say how to choose.
+run_case "lan: two addresses, no terminal" STUB_IFCONFIG_MODE=two -- --lan --yes
+expect_rc 1
+expect_out "--host"
+expect_out "192.168.1.20"
+expect_out "10.0.0.1"
+expect_not_called "collie start"
+
+# Two addresses and someone to ask: the second one (also with --yes: a choice is not a confirmation).
+run_case "lan: choose the second" STUB_IFCONFIG_MODE=two STUB_LOCAL_URL=http://10.0.0.1:8787 ASK=2 -- --lan --yes
+expect_rc 0
+expect_env_line "COLLIE_HOST=10.0.0.1"
+expect_env_line "COLLIE_PUBLIC_URL=http://10.0.0.1:8787"
+run_case "lan: an answer that is no choice" STUB_IFCONFIG_MODE=two ASK=9 -- --lan --yes
+expect_rc 1
+expect_not_called "collie start"
+
+# --host names the address and nothing is asked.
+run_case "lan: --host" STUB_IFCONFIG_MODE=two STUB_LOCAL_URL=http://10.0.0.1:8787 -- --lan --host 10.0.0.1 --yes
+expect_rc 0
+expect_env_line "COLLIE_HOST=10.0.0.1"
+run_case "lan: --host alone" STUB_LOCAL_URL=http://10.0.0.9:8787 -- --host 10.0.0.9 --yes
+expect_rc 0
+expect_env_line "COLLIE_HOST=10.0.0.9"
+run_case "lan: --host=" STUB_LOCAL_URL=http://10.0.0.9:8787 -- --lan --host=10.0.0.9 --yes
+expect_rc 0
+expect_env_line "COLLIE_HOST=10.0.0.9"
+run_case "lan: --host with the proxy" -- --proxy --url https://collie.example.com --host 10.0.0.9 --yes
+expect_rc 1
+expect_out "one way"
+
+# An address that is none.
+run_case "lan: --host too short" -- --lan --host 192.168.1 --yes
+expect_rc 1
+expect_not_called "collie start"
+run_case "lan: --host out of range" -- --lan --host 192.168.1.300 --yes
+expect_rc 1
+run_case "lan: --host with a port" -- --lan --host 192.168.1.20:8787 --yes
+expect_rc 1
+run_case "lan: --host a name" -- --lan --host my-mac.local --yes
+expect_rc 1
+run_case "lan: --host without a value" -- --lan --host
+expect_rc 1
+expect_out "--host needs a value"
+
+# Nothing a phone could reach.
+run_case "lan: no address" STUB_IFCONFIG_MODE=none -- --lan --yes
+expect_rc 3
+expect_out "local-network address"
+expect_out "--host"
+expect_not_called "collie start"
+
+# Collie's own port, when the .env sets one, goes into every address.
+run_case "lan: another port" ENVFILE="COLLIE_PORT=9000" STUB_LOCAL_URL=http://192.168.1.20:9000 -- --lan --yes
+expect_rc 0
+expect_env_line "COLLIE_PUBLIC_HOSTS=192.168.1.20:9000"
+expect_env_line "COLLIE_PUBLIC_URL=http://192.168.1.20:9000"
+
+# A Linux computer lists its addresses with `ip`.
+run_case "lan: linux" LINUX=1 STUB_LOCAL_URL=http://192.168.1.30:8787 -- --lan --yes
+expect_rc 0
+expect_env_line "COLLIE_HOST=192.168.1.30"
+
+# Asked by the route questions: not Tailscale, then the local network (2).
+run_case "lan: through the route questions" STUB_LOCAL_URL=http://192.168.1.20:8787 ASK=n,2,y --
+expect_rc 0
+expect_env_line "COLLIE_HOST=192.168.1.20"
+
+# --dry-run writes nothing.
+run_case "lan: dry run" STUB_LOCAL_URL=http://192.168.1.20:8787 -- --lan --dry-run
+expect_rc 0
+expect_out "COLLIE_HOST=192.168.1.20"
+expect_out "Dry run: nothing was changed."
+expect_no_env "COLLIE_HOST"
+expect_not_called "collie start"
+
+# Settings from an earlier proxy run are replaced where they stand.
+run_case "lan: after a proxy run" STUB_LOCAL_URL=http://192.168.1.20:8787 ENVFILE="COLLIE_SKIP_SERVE=1
+COLLIE_PUBLIC_HOSTS=collie.example.com
+COLLIE_ALLOWED_ORIGINS=https://collie.example.com
+COLLIE_PUBLIC_URL=https://collie.example.com" -- --lan --yes
+expect_rc 0
+expect_env_line "COLLIE_PUBLIC_URL=http://192.168.1.20:8787"
+expect_env_line "COLLIE_PUBLIC_HOSTS=192.168.1.20:8787"
+expect_no_env "collie.example.com"
+expect_called "collie restart"
+
+# Collie does not answer on that address: stop.
+run_case "lan: collie down" STUB_LOCAL_URL=http://192.168.1.20:8787 STUB_HEALTH_LOCAL=down -- --lan --yes
+expect_rc 4
+expect_not_called "collie pair"
+
+# Collie did not read the settings.
+run_case "lan: settings not picked up" STUB_LOCAL_URL=http://192.168.1.20:8787 STUB_IGNORE_ENV=1 -- --lan --yes
+expect_rc 3
+expect_out "did not pick up"
+expect_not_called "collie pair"
+
+# ==== the Tailscale route refuses what an earlier proxy or local network run left behind ======================================
+
+run_case "tailscale after the proxy" ENVFILE="COLLIE_SKIP_SERVE=1" -- --tailscale --yes
+expect_rc 3
+expect_out "COLLIE_SKIP_SERVE"
+expect_out "$sandbox/home/.config/collie/.env"
+expect_not_called "collie start"
+run_case "tailscale after the local network" ENVFILE="COLLIE_HOST=192.168.1.20" -- --tailscale --yes
+expect_rc 3
+expect_out "COLLIE_HOST"
+expect_not_called "collie start"
+run_case "tailscale with a loopback host" ENVFILE="COLLIE_HOST=127.0.0.1" -- --tailscale --yes
+expect_rc 0
 
 # ---- shellcheck, when it is there -----------------------------------------------------------------------------------------
 if command -v shellcheck >/dev/null 2>&1; then

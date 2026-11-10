@@ -1,25 +1,27 @@
 #!/bin/sh
 # dogr setup.sh - put Collie on this computer and pair your phone with it.
 #
-# Route: Tailscale. It calls the commands of the programs it sets up and checks the result:
+# Three ways for the phone to reach this computer (--tailscale, --proxy, --lan; without one the script asks). It calls the
+# commands of the programs it sets up and checks the result:
 #   1. install Collie, only if it is not installed yet (Collie's own installer);
 #   2. make sure the terminal program Collie drives is there and running: herdr or herdr-core (--mux picks one). A missing
 #      one is installed with its own installer; herdr-core is started with `hc server start`; herdr has to be opened by you;
-#   3. `collie start`: runs Collie in the background and publishes it on your tailnet;
-#   4. check that Collie answers on this computer and on its Tailscale address, and drives the program you picked;
+#   3. `collie start`: runs Collie in the background. Over Tailscale it also publishes Collie on your tailnet; behind your
+#      own reverse proxy (--proxy --url https://...) or on the local network (--lan) Collie publishes nothing itself;
+#   4. check that Collie answers where the phone will look for it, and drives the program you picked;
 #   5. `collie pair`, last of all, so the one-time code has all of its ten minutes left.
-# Two lines of Collie's own .env may change, each one only in the way the plan says before you agree: COLLIE_MUX, when it
-# names the other terminal program than the one you picked (replaced where it stands), and, on a tailnet without HTTPS
-# certificates (Headscale, for one), COLLIE_SERVE_MODE=http (added with your agreement or --http), so Collie is published
-# over plain http inside the tailnet.
+# Lines of Collie's own .env may change, each only in the way the plan says before you agree: COLLIE_MUX, when it names the
+# other terminal program than the one you picked; on a tailnet without HTTPS certificates (Headscale, for one)
+# COLLIE_SERVE_MODE=http (with your agreement or --http); and for --proxy and --lan the settings that route needs
+# (COLLIE_SKIP_SERVE, COLLIE_PUBLIC_URL and friends). A line that is there is replaced where it stands, a missing one is added.
 #
 # Run it:        curl -fsSL https://raw.githubusercontent.com/mithyer/dogr/main/setup.sh | sh
 # Options go after `-s --`:   ... | sh -s -- --tailscale --yes
 #
 # Safe to run again: a step that is already done is skipped, and nothing is installed twice.
 #
-# Exit codes: 0 done | 1 wrong use or unsupported computer | 2 route not scripted yet | 3 Collie needs setup
-#             4 Collie did not start or does not answer | 5 Collie could not be installed | 6 stopped by you
+# Exit codes: 0 done | 1 wrong use or unsupported computer | 2 (not used) | 3 Collie or the way to it needs setup
+#             4 Collie did not start or does not answer | 5 something could not be installed | 6 stopped by you
 #
 # Environment (all optional):
 #   DOGR_COLLIE_TAG           install this Collie release (for example v1.27.0) instead of the newest
@@ -38,7 +40,23 @@ main() {
     TTY=${DOGR_TTY:-/dev/tty}
     TRIES=${DOGR_TRIES:-20}
     DELAY=${DOGR_POLL_DELAY:-1}
+    # how the phone reaches this computer: tailscale, proxy or lan; empty until an option or the questions say
     ROUTE=
+    # the https:// address of the reverse proxy (--url), and the address of this computer on the local network (--host)
+    PROXY_URL=
+    LAN_HOST=
+    # the address the phone will use, and the host part the Host header carries, for the proxy and local network routes
+    PUBLIC_URL=
+    PUBLIC_HOST=
+    # the port Collie listens on (COLLIE_PORT of the .env, else Collie's default)
+    PORT=8787
+    # the settings this route needs in Collie's .env, as KEY=VALUE words separated by spaces (no value has a space in it)
+    WANT=
+    # 1 when this run adds or changes such a line, and 1 once the comment that says who added them has been written
+    ENV_TOUCHED=0
+    ENV_NOTED=0
+    # 1 when Collie was installed before this run, so it may already run with the old settings
+    WAS_INSTALLED=0
     # the terminal program Collie drives: herdr or herdr-core; empty until --mux, the one that is installed, or an answer
     MUX=
     # the command that runs herdr-core: hc, or herdr-core when only that name exists
@@ -77,11 +95,21 @@ main() {
 
     usage() {
         cat <<'EOF'
-Usage: setup.sh [--tailscale] [--mux herdr|herdr-core] [--http] [--yes] [--dry-run] [--help]
+Usage: setup.sh [--tailscale | --proxy --url URL | --lan [--host ADDRESS]] [--mux herdr|herdr-core] [--http]
+                [--yes] [--dry-run] [--help]
 
-Puts Collie on this computer, publishes it on your Tailscale network, and shows a QR code that pairs your phone.
+Puts Collie on this computer, sets it up for the way your phone reaches it, and shows a QR code that pairs your phone.
+Without --tailscale, --proxy or --lan the script asks which way you use.
 
-  --tailscale   You reach this computer through Tailscale (the only route available so far). Without it, the script asks.
+  --tailscale   Your phone reaches this computer through Tailscale: Collie is published on your tailnet.
+  --proxy       Your phone reaches this computer through your own domain, with a reverse proxy you run in front of Collie.
+                Needs --url (or the script asks for it). The script sets Collie up behind the proxy; it does not set up
+                the proxy, its certificate or who may reach it.
+  --url URL     The https address of the reverse proxy, for example https://collie.example.com (no path). Implies --proxy.
+  --lan         Your phone reaches this computer over the local network, with plain http and no encryption. Collie then
+                answers to everything on that network. Use it at home only.
+  --host ADDRESS  The address of this computer on the local network, for example 192.168.1.20. Implies --lan. Without it
+                the script looks for one, and asks when there are several.
   --mux NAME    The terminal program Collie drives: herdr (the terminal app) or herdr-core (a background service). One
                 that is missing is installed with its own installer. Without this option the script asks which one, and
                 stops when there is no terminal to ask on. If Collie's .env names the other one, the plan says so and
@@ -94,6 +122,15 @@ Puts Collie on this computer, publishes it on your Tailscale network, and shows 
   --dry-run     Show what would happen, change nothing, and stop.
   --help, -h    Show this text.
 EOF
+    }
+
+    # set_route NAME: the way the phone reaches this computer. Only one at a time: a second, different one stops the script.
+    set_route() {
+        if [ -n "$ROUTE" ] && [ "$ROUTE" != "$1" ]; then
+            usage >&2
+            die 1 "choose one way for the phone to reach this computer: --tailscale, --proxy or --lan (one way at a time)."
+        fi
+        ROUTE=$1
     }
 
     # have_tty: true when there is somewhere to read an answer from
@@ -222,21 +259,230 @@ EOF
         esac
     }
 
-    # env_mux: the value of the last COLLIE_MUX line in Collie's .env (an optional leading "export", quotes and a trailing
+    # env_get KEY: the value of the last KEY line in Collie's .env (an optional leading "export", quotes and a trailing
     # comment are dropped), or nothing
-    env_mux() {
+    env_get() {
         [ -f "$ENV_FILE" ] || return 0
-        sed -n 's/^[[:space:]]*\(export[[:space:]][[:space:]]*\)\{0,1\}COLLIE_MUX=//p' "$ENV_FILE" | tail -n 1 |
+        sed -n 's/^[[:space:]]*\(export[[:space:]][[:space:]]*\)\{0,1\}'"$1"'=//p' "$ENV_FILE" | tail -n 1 |
             sed 's/[[:space:]]*#.*$//; s/[[:space:]]*$//; s/^"\(.*\)"$/\1/; s/^'"'"'\(.*\)'"'"'$/\1/'
     }
 
-    # set_env_mux: put COLLIE_MUX=$MUX where the COLLIE_MUX lines of Collie's .env stand now. Collie keeps that file as its
-    # own record and reads it before the environment, so a second line further down would lose to the first. The file is
-    # written through cat, so its owner and mode stay.
-    set_env_mux() {
-        tmp=$WORK/env.new
-        sed 's/^[[:space:]]*\(export[[:space:]][[:space:]]*\)\{0,1\}COLLIE_MUX=.*$/COLLIE_MUX='"$MUX"'/' "$ENV_FILE" >"$tmp" || return 1
-        cat "$tmp" >"$ENV_FILE"
+    # env_mux: the terminal program Collie's .env names, or nothing
+    env_mux() { env_get COLLIE_MUX; }
+
+    # env_set KEY VALUE: make Collie's .env say KEY=VALUE. A KEY line that is there is replaced where it stands: Collie keeps
+    # that file as its own record and reads it before the environment, so a second line further down would lose to the first.
+    # A missing one is added at the end, under one comment that says who added it. The file is written through cat, so its
+    # owner and mode stay; a new file is private to the user, as it may hold settings that are not for others. VALUE has
+    # only the characters that the checks of each route let through, so it is safe inside the sed command.
+    env_set() {
+        if [ -f "$ENV_FILE" ] && grep -q "^[[:space:]]*\(export[[:space:]][[:space:]]*\)\{0,1\}$1=" "$ENV_FILE"; then
+            tmp=$WORK/env.new
+            sed 's|^[[:space:]]*\(export[[:space:]][[:space:]]*\)\{0,1\}'"$1"'=.*$|'"$1=$2"'|' "$ENV_FILE" >"$tmp" || return 1
+            cat "$tmp" >"$ENV_FILE"
+            return
+        fi
+        mkdir -p "${ENV_FILE%/*}" || return 1
+        if [ "$ENV_NOTED" != 1 ]; then
+            (
+                umask 077
+                printf '\n# Added by dogr setup.sh (%s).\n' "$ROUTE" >>"$ENV_FILE"
+            ) || return 1
+            ENV_NOTED=1
+        fi
+        (
+            umask 077
+            printf '%s=%s\n' "$1" "$2" >>"$ENV_FILE"
+        )
+    }
+
+    # want KEY VALUE: this route needs KEY=VALUE in Collie's .env
+    want() { WANT="$WANT $1=$2"; }
+
+    # plan_settings: the plan line for the settings of this route, with one line for each that is not in the .env yet
+    # (add) or has another value there (change). Sets ENV_TOUCHED to 1 when there is any.
+    plan_settings() {
+        lines=
+        for pair in $WANT; do
+            key=${pair%%=*}
+            value=${pair#*=}
+            cur=$(env_get "$key")
+            if [ -z "$cur" ]; then
+                lines="$lines      add     $key=$value
+"
+                ENV_TOUCHED=1
+            elif [ "$cur" != "$value" ]; then
+                lines="$lines      change  $key from $cur to $value
+"
+                ENV_TOUCHED=1
+            fi
+        done
+        if [ "$ENV_TOUCHED" = 1 ]; then
+            plan "Put these settings into $ENV_FILE (Collie reads that file before your environment):"
+            printf '%s' "$lines"
+        else
+            plan "The settings this needs are in $ENV_FILE already."
+        fi
+    }
+
+    # apply_settings: write what plan_settings listed
+    apply_settings() {
+        for pair in $WANT; do
+            key=${pair%%=*}
+            value=${pair#*=}
+            [ "$(env_get "$key")" = "$value" ] && continue
+            env_set "$key" "$value" || die 3 "could not write $ENV_FILE"
+            say "  $ENV_FILE: $key=$value"
+        done
+    }
+
+    # ask_line PROMPT: ask for a line of text on the terminal and put it, trimmed, in ANSWER. Returns 1 when there is no answer.
+    ask_line() {
+        open_tty || return 1
+        printf '%s' "$1" >&2
+        ANSWER=
+        IFS= read -r ANSWER <&3 || return 1
+        ANSWER=$(printf '%s' "$ANSWER" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    }
+
+    # ask_other_route: the answer to the first question was "no": ask which of the other two ways it is.
+    ask_other_route() {
+        {
+            printf '%s\n' "How does your phone reach this computer, then?"
+            printf '%s\n' "  1) through your own domain, with a reverse proxy you run in front of Collie (HTTPS)"
+            printf '%s\n' "  2) over the local network, with plain http and no encryption"
+            printf '%s' "Enter 1 or 2: "
+        } >&2
+        answer=
+        IFS= read -r answer <&3 || die 1 "no answer. Run again with --proxy or --lan."
+        case $answer in
+            1 | proxy) ROUTE=proxy ;;
+            2 | lan) ROUTE=lan ;;
+            *) die 1 "'$answer' is not 1 or 2. Run again with --proxy or --lan." ;;
+        esac
+    }
+
+    # check_leftovers: the Tailscale route needs Collie to publish itself. Settings that an earlier proxy or local network run
+    # left in the .env would stop that, so the script stops and names them. Nothing is deleted on a guess.
+    check_leftovers() {
+        left=
+        if [ "$(env_get COLLIE_SKIP_SERVE)" = 1 ]; then left="$left COLLIE_SKIP_SERVE"; fi
+        case $(env_get COLLIE_HOST) in
+            '' | 127.0.0.1 | localhost | ::1) ;;
+            *) left="$left COLLIE_HOST" ;;
+        esac
+        [ -n "$left" ] || return 0
+        say "$ENV_FILE has settings of another way to reach this computer, which keep Collie from publishing itself on Tailscale:$left"
+        say "Delete these lines from that file (an earlier --proxy or --lan run added them): COLLIE_SKIP_SERVE, COLLIE_HOST,"
+        say "COLLIE_ALLOW_NON_LOOPBACK_BIND, COLLIE_PUBLIC_HOSTS, COLLIE_ALLOWED_ORIGINS, COLLIE_PUBLIC_URL. Then run this command again."
+        exit 3
+    }
+
+    # resolve_proxy: the public address of the reverse proxy, from --url or asked for, checked, and the settings it needs
+    resolve_proxy() {
+        if [ -z "$PROXY_URL" ]; then
+            have_tty || die 1 "there is no terminal to ask for the public address. Run again with --url https://... (for example --url https://collie.example.com)."
+            ask_line "The public address your phone will use, for example https://collie.example.com: " || die 1 "no answer. Run again with --url https://..."
+            PROXY_URL=$ANSWER
+        fi
+        case $PROXY_URL in
+            https://*) ;;
+            *) die 1 "the address must start with https:// (your reverse proxy ends the encryption in front of Collie): $PROXY_URL" ;;
+        esac
+        rest=${PROXY_URL#https://}
+        rest=${rest%/}
+        case $rest in
+            '') die 1 "the address has no host name: $PROXY_URL" ;;
+            */*) die 1 "the address must not have a path, Collie does not live in a sub-folder: $PROXY_URL" ;;
+            *@*) die 1 "the address must not have a user name in it: $PROXY_URL" ;;
+            [!A-Za-z0-9]* | *[!A-Za-z0-9.:_-]*) die 1 "that is not a host name with an optional port: $PROXY_URL" ;;
+        esac
+        # Port 443 is the one https uses without saying so, and the Host header then carries no port.
+        case $rest in *:443) rest=${rest%:443} ;; esac
+        PUBLIC_HOST=$rest
+        PUBLIC_URL=https://$rest
+        want COLLIE_SKIP_SERVE 1
+        want COLLIE_PUBLIC_HOSTS "$PUBLIC_HOST"
+        want COLLIE_ALLOWED_ORIGINS "$PUBLIC_URL"
+        want COLLIE_PUBLIC_URL "$PUBLIC_URL"
+        # Behind a proxy Collie answers on loopback. A wide bind left by an earlier --lan run has to go back.
+        case $(env_get COLLIE_HOST) in
+            '' | 127.0.0.1 | localhost | ::1) ;;
+            *) want COLLIE_HOST 127.0.0.1 ;;
+        esac
+    }
+
+    # valid_ipv4 TEXT: true for four numbers up to 255 separated by dots
+    valid_ipv4() {
+        case $1 in
+            '' | *[!0-9.]* | .* | *. | *..*) return 1 ;;
+        esac
+        oldifs=$IFS
+        IFS=.
+        # shellcheck disable=SC2086  # splitting at the dots is the point; the text has only digits and dots
+        set -- $1
+        IFS=$oldifs
+        [ $# = 4 ] || return 1
+        for octet in "$@"; do
+            [ "${#octet}" -le 3 ] && [ "$octet" -le 255 ] || return 1
+        done
+    }
+
+    # lan_addresses: one "interface address" line for each address of this computer that a phone on the same network can
+    # reach: private IPv4 ranges only, and not those of Tailscale, Docker, virtual machines and the like.
+    lan_addresses() {
+        if command -v ip >/dev/null 2>&1; then
+            ip -o -4 addr show scope global 2>/dev/null | awk '{ split($4, a, "/"); print $2, a[1] }'
+        elif command -v ifconfig >/dev/null 2>&1; then
+            ifconfig 2>/dev/null | awk '/^[A-Za-z0-9_.-]+:/ { i = $1; sub(":", "", i) } $1 == "inet" { print i, $2 }'
+        fi | awk '
+            $1 ~ /^(lo|utun|tailscale|ts|docker|veth|br-|virbr|vmnet|vboxnet|bridge|zt|wg|tun|tap|llw|awdl)/ { next }
+            $2 ~ /^10\./ || $2 ~ /^192\.168\./ || $2 ~ /^172\.(1[6-9]|2[0-9]|3[01])\./ { print }'
+    }
+
+    # resolve_lan: this computer's address on the local network, from --host, or found (and asked for when there are several),
+    # and the settings that route needs
+    resolve_lan() {
+        if [ -n "$LAN_HOST" ]; then
+            valid_ipv4 "$LAN_HOST" || die 1 "--host needs an address like 192.168.1.20 (four numbers, no name, no port): $LAN_HOST"
+        else
+            found=$(lan_addresses)
+            count=$(printf '%s\n' "$found" | grep -c .)
+            if [ "$count" = 0 ]; then
+                die 3 "no local-network address was found on this computer. Connect to your Wi-Fi or network, or give the address with --host ADDRESS."
+            elif [ "$count" = 1 ]; then
+                LAN_HOST=${found##* }
+                say "This computer's address on the local network: $LAN_HOST (${found%% *})"
+            else
+                say "This computer has more than one address on a local network:"
+                n=0
+                printf '%s\n' "$found" | while read -r iface addr; do
+                    n=$((n + 1))
+                    say "  $n) $addr  ($iface)"
+                done
+                if ! open_tty; then
+                    die 1 "there is no terminal to choose one on. Run again with --host ADDRESS, naming the one your phone can reach."
+                fi
+                printf '%s' "Which one can your phone reach? Enter its number: " >&2
+                answer=
+                IFS= read -r answer <&3 || die 1 "no answer. Run again with --host ADDRESS."
+                case $answer in
+                    '' | *[!0-9]*) die 1 "'$answer' is not one of the numbers above. Run again with --host ADDRESS." ;;
+                esac
+                if [ "$answer" -lt 1 ] || [ "$answer" -gt "$count" ]; then
+                    die 1 "'$answer' is not one of the numbers above. Run again with --host ADDRESS."
+                fi
+                LAN_HOST=$(printf '%s\n' "$found" | sed -n "${answer}p" | sed 's/^[^ ]* //')
+            fi
+        fi
+        PUBLIC_HOST=$LAN_HOST:$PORT
+        PUBLIC_URL=http://$PUBLIC_HOST
+        want COLLIE_HOST "$LAN_HOST"
+        want COLLIE_ALLOW_NON_LOOPBACK_BIND 1
+        want COLLIE_SKIP_SERVE 1
+        want COLLIE_PUBLIC_HOSTS "$PUBLIC_HOST"
+        want COLLIE_ALLOWED_ORIGINS "$PUBLIC_URL"
+        want COLLIE_PUBLIC_URL "$PUBLIC_URL"
     }
 
     # plan TEXT...: one numbered line of the plan
@@ -294,7 +540,35 @@ EOF
     # Read the command line.
     while [ $# -gt 0 ]; do
         case $1 in
-            --tailscale) ROUTE=tailscale ;;
+            --tailscale) set_route tailscale ;;
+            --proxy) set_route proxy ;;
+            --lan) set_route lan ;;
+            --url)
+                if [ $# -lt 2 ]; then
+                    usage >&2
+                    die 1 "--url needs a value: the https address of your reverse proxy"
+                fi
+                set_route proxy
+                PROXY_URL=$2
+                shift
+                ;;
+            --url=*)
+                set_route proxy
+                PROXY_URL=${1#--url=}
+                ;;
+            --host)
+                if [ $# -lt 2 ]; then
+                    usage >&2
+                    die 1 "--host needs a value: the address of this computer on the local network"
+                fi
+                set_route lan
+                LAN_HOST=$2
+                shift
+                ;;
+            --host=*)
+                set_route lan
+                LAN_HOST=${1#--host=}
+                ;;
             --mux)
                 if [ $# -lt 2 ]; then
                     usage >&2
@@ -339,17 +613,26 @@ EOF
     trap 'exit 130' INT
     trap 'exit 143' TERM
 
-    # The first question: which way does the phone reach this computer? Tailscale is the only way scripted so far.
+    # The first question: which way does the phone reach this computer? Tailscale first; "no" leads to the other two.
     if [ -z "$ROUTE" ]; then
-        have_tty || die 1 "there is no terminal to ask on. Run again with --tailscale (and --yes) to answer for you."
+        have_tty || die 1 "there is no terminal to ask on. Run again with --tailscale, --proxy or --lan (and --yes) to answer for you."
         if ask_yes_no "Do you reach this computer from your phone through Tailscale?"; then
             ROUTE=tailscale
         else
-            say "Only the Tailscale route is scripted so far. Your own domain with a reverse proxy, or the local network"
-            say "without encryption, are set up by hand for now: see Collie's deployment guide (docs/deployment.md)."
-            exit 2
+            ask_other_route
         fi
     fi
+
+    # What the chosen route needs to know, and the settings it puts into Collie's .env.
+    PORT=$(env_get COLLIE_PORT)
+    case $PORT in
+        '' | *[!0-9]*) PORT=8787 ;;
+    esac
+    case $ROUTE in
+        tailscale) check_leftovers ;;
+        proxy) resolve_proxy ;;
+        lan) resolve_lan ;;
+    esac
 
     # Which terminal program does Collie drive? The one named with --mux, else ask (the question marks what is installed).
     have_herdr=0
@@ -372,6 +655,7 @@ EOF
 
     # Say what is about to happen, then ask once.
     if find_collie; then
+        WAS_INSTALLED=1
         installed=$(collie version 2>/dev/null </dev/null | head -n 1)
         install_line="Collie is already installed (${installed:-version unknown}); it is left as it is."
     else
@@ -392,9 +676,29 @@ EOF
     if [ "$ENV_CHANGED" = 1 ]; then
         plan "Change COLLIE_MUX in $ENV_FILE from $ENV_MUX to $MUX (Collie reads that file before your environment), then restart Collie."
     fi
-    plan "Start Collie in the background (launchd on macOS, systemd --user on Linux), driving $MUX."
-    plan "Publish it on your tailnet with 'tailscale serve' (HTTPS, port 443 -> 127.0.0.1:8787)."
+    if [ "$ROUTE" != tailscale ]; then plan_settings; fi
+    case $ROUTE in
+        tailscale)
+            plan "Start Collie in the background (launchd on macOS, systemd --user on Linux), driving $MUX."
+            plan "Publish it on your tailnet with 'tailscale serve' (HTTPS, port 443 -> 127.0.0.1:8787)."
+            ;;
+        proxy)
+            plan "Start Collie in the background (launchd on macOS, systemd --user on Linux), driving $MUX. It answers on 127.0.0.1 only; your reverse proxy is what the phone reaches."
+            plan "Check that Collie answers here and at $PUBLIC_URL, and show an example of the proxy setup. The proxy, its certificate and who may reach it are yours to set up."
+            ;;
+        lan)
+            plan "Start Collie in the background (launchd on macOS, systemd --user on Linux), driving $MUX, answering on $PUBLIC_HOST."
+            plan "Check that Collie answers at $PUBLIC_URL."
+            ;;
+    esac
     plan "Create a one-time pairing code and show it as a QR code."
+    if [ "$ROUTE" = lan ]; then
+        say ""
+        say "Please note: this is plain http, so the traffic is not encrypted. Anyone on your local network can reach Collie."
+        say "Pairing still needs the one-time code, and every API request other than the health check and the pairing needs the"
+        say "key that pairing hands out. Use it at home, not on a shared or public network."
+        say ""
+    fi
     say "Nothing else on this computer is changed. How to undo it is in the README."
     if [ "$DRY_RUN" = 1 ]; then
         say "Dry run: nothing was changed."
@@ -459,11 +763,12 @@ EOF
     # The program Collie drives is a setting of Collie's. The .env is read before the environment, so a line that names the
     # other program is replaced where it stands; otherwise the environment tells Collie, and Collie writes it to the .env.
     if [ "$ENV_CHANGED" = 1 ]; then
-        set_env_mux || die 3 "could not change $ENV_FILE"
+        env_set COLLIE_MUX "$MUX" || die 3 "could not change $ENV_FILE"
         say "  $ENV_FILE: COLLIE_MUX changed from $ENV_MUX to $MUX"
     fi
     COLLIE_MUX=$MUX
     export COLLIE_MUX
+    if [ "$ROUTE" != tailscale ]; then apply_settings; fi
 
     # Step 3: start Collie. It prints lines starting with "setup:" for what is missing; it never stops on them itself.
     say ""
@@ -471,15 +776,16 @@ EOF
     log=$WORK/start.log
     rcfile=$WORK/start.rc
     run_collie start
-    # A running Collie may have started before the setting changed, so it is restarted to read it.
-    if [ "$ENV_CHANGED" = 1 ]; then
+    # A running Collie may have started before a setting changed, so it is restarted to read it. A Collie that this run
+    # installed was never running, so its first start has read everything.
+    if [ "$ENV_CHANGED" = 1 ] || { [ "$ENV_TOUCHED" = 1 ] && [ "$WAS_INSTALLED" = 1 ]; }; then
         say ""
-        say "==> Restarting Collie so it drives $MUX"
+        say "==> Restarting Collie so it reads the changed settings"
         run_collie restart
     fi
     # One finding has a way out that this script can take: a tailnet without HTTPS certificates. Any other finding, or this one
     # together with another, is for the person to fix first.
-    if [ "$(grep -c '^ *setup:' "$log")" = 1 ] && grep -q 'HTTPS certificates are off for your tailnet' "$log"; then
+    if [ "$ROUTE" = tailscale ] && [ "$(grep -c '^ *setup:' "$log")" = 1 ] && grep -q 'HTTPS certificates are off for your tailnet' "$log"; then
         switch_to_http
         say ""
         say "==> Restarting Collie"
@@ -508,30 +814,72 @@ EOF
         say "profile or a service file). Remove it, run 'collie restart', then run this command again."
         exit 3
     fi
-    if [ -z "$phone_url" ]; then
-        say ""
-        say "Collie could not read this computer's Tailscale address, so a phone has nothing to connect to."
-        say "Run 'collie doctor' and fix what it names, then run this command again."
-        exit 3
-    fi
-    if [ "$SWITCHED" = 1 ]; then
-        case $phone_url in
-            http://*) ;;
-            *)
+    case $ROUTE in
+        tailscale)
+            if [ -z "$phone_url" ]; then
                 say ""
-                say "Collie still gives an https:// address, so it did not pick up COLLIE_SERVE_MODE=http."
-                say "It may read its settings from another folder (for example when Herdr manages it). Put that line in the .env"
-                say "that Collie really uses, run 'collie restart', then run this command again."
+                say "Collie could not read this computer's Tailscale address, so a phone has nothing to connect to."
+                say "Run 'collie doctor' and fix what it names, then run this command again."
                 exit 3
-                ;;
-        esac
-    fi
-    if retry health_ok "$phone_url"; then
-        say "  on Tailscale:     $phone_url answers"
-    else
-        # Not fatal: some computers cannot reach their own Tailscale name, although other devices can.
-        warn "$phone_url did not answer from this computer. If your phone cannot connect either, run 'collie doctor'."
-    fi
+            fi
+            if [ "$SWITCHED" = 1 ]; then
+                case $phone_url in
+                    http://*) ;;
+                    *)
+                        say ""
+                        say "Collie still gives an https:// address, so it did not pick up COLLIE_SERVE_MODE=http."
+                        say "It may read its settings from another folder (for example when Herdr manages it). Put that line in the .env"
+                        say "that Collie really uses, run 'collie restart', then run this command again."
+                        exit 3
+                        ;;
+                esac
+            fi
+            if retry health_ok "$phone_url"; then
+                say "  on Tailscale:     $phone_url answers"
+            else
+                # Not fatal: some computers cannot reach their own Tailscale name, although other devices can.
+                warn "$phone_url did not answer from this computer. If your phone cannot connect either, run 'collie doctor'."
+            fi
+            ;;
+        proxy | lan)
+            # Collie must give the address that was asked for: if it does not, it did not read the settings.
+            if [ "$phone_url" != "$PUBLIC_URL" ]; then
+                say ""
+                say "Collie says its address is ${phone_url:-unknown}, not $PUBLIC_URL, so it did not pick up the settings in $ENV_FILE."
+                say "It may read its settings from another folder (for example when Herdr manages it). Put the lines there,"
+                say "run 'collie restart', then run this command again."
+                exit 3
+            fi
+            if [ "$ROUTE" = proxy ]; then
+                say ""
+                say "==> Your reverse proxy"
+                say "Collie answers on 127.0.0.1:$PORT only. Your proxy has to take $PUBLIC_URL and pass it on to Collie, with the"
+                say "Host header unchanged. For Caddy that is:"
+                say ""
+                say "    $PUBLIC_HOST {"
+                say "        reverse_proxy 127.0.0.1:$PORT {"
+                say "            header_up Host {host}"
+                say "        }"
+                say "    }"
+                say ""
+                say "This script does not set up the proxy, its certificate or who may reach it. Collie's deployment guide"
+                say "(docs/deployment.md, 'Variant C') lists what a proxy in front of Collie should do."
+                if retry health_ok "$phone_url"; then
+                    say "  through the proxy: $phone_url answers"
+                else
+                    say ""
+                    say "Collie runs, but $PUBLIC_URL does not answer from this computer yet."
+                    say "Set up the proxy as shown above (a sign-in page in front of /api/health makes this check fail too), then run:"
+                    say "    collie pair"
+                    say "That shows the pairing code and QR code for your phone. If this computer cannot reach its own public address"
+                    say "but your phone can, run it now."
+                    exit 3
+                fi
+            else
+                say "  on the local network: $phone_url answers"
+            fi
+            ;;
+    esac
 
     # Step 5: the pairing code comes last, so its ten minutes start when the phone is ready to use it.
     say ""
@@ -548,6 +896,10 @@ EOF
     say "The code works once and for ${minutes:-a few} minutes. For a new one, run: collie pair"
     if [ "$SWITCHED" = 1 ]; then
         say "The address starts with http://. Tailscale encrypts the traffic between your devices; the address is just not HTTPS."
+    fi
+    if [ "$ROUTE" = lan ]; then
+        say "The address starts with http:// and is not encrypted. Your phone must be on the same network as this computer."
+        say "If this computer gets a new address, Collie can no longer start: run this command again."
     fi
     exit 0
 }
