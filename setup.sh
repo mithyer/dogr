@@ -33,6 +33,7 @@
 #   DOGR_HERDR_CORE_INSTALL_URL   where herdr-core's installer comes from (default https://releases.herdr.dev/core/install.sh)
 #   DOGR_TAILCAT_VERSION      the tailcat release to download on Linux (default 0.7.0); macOS takes what Homebrew has
 #   DOGR_TAILCAT_RELEASE_URL  where those release files are (default https://github.com/tailscale/tailcat/releases/download/v<version>)
+#   DOGR_PROGRESS             always | never | auto (default): draw "12.3 / 45.6 MB" while the installers download (auto = on a terminal only)
 #   DOGR_TTY                  where answers are read from (default /dev/tty); a test points it at a file
 #   DOGR_TRIES, DOGR_POLL_DELAY   how often and how far apart to check that Collie answers (default 20 and 1 second)
 
@@ -94,6 +95,9 @@ main() {
     # the file Collie reads its settings from (a standalone install; see the README for installs that Herdr manages)
     ENV_FILE=$HOME/.config/collie/.env
     WORK=
+    # the real curl, and whether the progress wrapper in front of it is written (see make_curl_wrapper)
+    REAL_CURL=
+    WRAP_OK=0
 
     # ---- small helpers --------------------------------------------------------------------------------------------
     say() { printf '%s\n' "$*"; }
@@ -108,6 +112,121 @@ main() {
     # shellcheck disable=SC2329  # called by the EXIT trap, which shellcheck cannot see
     cleanup() {
         if [ -n "$WORK" ] && [ -d "$WORK" ]; then rm -rf "$WORK"; fi
+    }
+
+    # ---- download progress ----------------------------------------------------------------------------------------
+    # The installers download with a silent curl, so a slow connection looks like a hang. While they run, a small `curl` stands in
+    # front of the real one (PATH points at it; the real one is named in DOGR_REAL_CURL). It hands every call to the real curl
+    # unchanged and, when the call saves a file and the output is a terminal, draws "12.3 / 45.6 MB (27%)" from the size of the
+    # file and the Content-Length that curl dumps with -D. Nothing is drawn into a log or a pipe, DOGR_PROGRESS=always forces it,
+    # DOGR_PROGRESS=never switches it off, and a file under 1 MB is not worth a line (a script, a checksum).
+    # make_curl_wrapper: write the wrapper into $WORK/bin. Progress is a nicety: when it cannot be set up the downloads stay quiet.
+    make_curl_wrapper() {
+        REAL_CURL=$(command -v curl) || return 1
+        mkdir -p "$WORK/bin" || return 1
+        cat >"$WORK/bin/curl" <<'WRAPPER' || return 1
+#!/bin/sh
+# Written by dogr's setup.sh for the time its installers run. Every call goes to the real curl unchanged; a download that saves
+# a file on a terminal also gets a line "12.3 / 45.6 MB (27%)" while the file comes in.
+real=${DOGR_REAL_CURL:-}
+if [ -z "$real" ] || [ ! -x "$real" ]; then
+    echo "dogr: the curl wrapper does not know the real curl." >&2
+    exit 127
+fi
+mode=${DOGR_PROGRESS:-auto}
+if [ "$mode" = never ] || { [ "$mode" != always ] && [ ! -t 2 ]; }; then
+    exec "$real" "$@"
+fi
+# What is saved where: the word after -o, and the address that is fetched (either may come first).
+out=
+url=
+next=
+for arg in "$@"; do
+    if [ -n "$next" ]; then
+        out=$arg
+        next=
+        continue
+    fi
+    case $arg in
+        -o | --output) next=1 ;;
+        http://* | https://*) url=$arg ;;
+    esac
+done
+case $out in
+    "" | - | /dev/null) exec "$real" "$@" ;;
+esac
+[ -n "$url" ] || exec "$real" "$@"
+hdr=${DOGR_WORK:-${TMPDIR:-/tmp}}/dl.$$.hdr
+name=${out##*/}
+start=$(date +%s 2>/dev/null || echo 0)
+# The download runs in the background; this shell watches the file grow. The headers go to $hdr (-D) so the total is known
+# without a second request.
+"$real" -D "$hdr" "$@" <&0 &
+pid=$!
+trap 'kill "$pid" 2>/dev/null; rm -f "$hdr"; exit 130' INT TERM
+# size: bytes saved so far. total: the last Content-Length curl has seen (a redirect says 0 first), 0 when it is not told.
+size() {
+    cur=$(wc -c <"$out" 2>/dev/null) || cur=0
+    cur=${cur##* }
+    total=$(sed -n 's/^[Cc][Oo][Nn][Tt][Ee][Nn][Tt]-[Ll][Ee][Nn][Gg][Tt][Hh]: *\([0-9][0-9]*\).*/\1/p' "$hdr" 2>/dev/null | tail -n 1)
+    : "${cur:=0}" "${total:=0}"
+}
+# draw: one line that replaces the one before; megabytes are millions of bytes, as Finder counts them.
+draw() {
+    now=$(date +%s 2>/dev/null || echo 0)
+    awk -v c="$cur" -v t="$total" -v n="$name" -v s="$((now - start))" 'BEGIN {
+        line = sprintf("  %s  %.1f", n, c / 1000000)
+        if (t > 0) {
+            p = c * 100 / t
+            if (p > 100) p = 100
+            line = line sprintf(" / %.1f MB  (%d%%)", t / 1000000, p)
+        } else line = line " MB"
+        if (s >= 2 && c > 0) line = line sprintf("  %.1f MB/s", c / s / 1000000)
+        printf "\r%s\033[K", line
+    }' >&2
+}
+while kill -0 "$pid" 2>/dev/null; do
+    size
+    if [ "$total" -ge 1000000 ] || [ "$cur" -ge 1000000 ]; then draw; fi
+    sleep 0.2 2>/dev/null || sleep 1
+done
+wait "$pid"
+rc=$?
+# The last line stays on the screen, with what really came in.
+size
+if [ "$total" -ge 1000000 ] || [ "$cur" -ge 1000000 ]; then
+    draw
+    printf '\n' >&2
+fi
+rm -f "$hdr"
+exit "$rc"
+WRAPPER
+        chmod +x "$WORK/bin/curl" || return 1
+        WRAP_OK=1
+    }
+    # fetch URL FILE: save a file; the progress line is drawn when it is big.
+    fetch() {
+        if [ "$WRAP_OK" = 1 ]; then
+            DOGR_REAL_CURL=$REAL_CURL DOGR_WORK=$WORK "$WORK/bin/curl" -fsSL "$1" -o "$2"
+        else
+            curl -fsSL "$1" -o "$2"
+        fi
+    }
+    # run_installer SCRIPT [COLLIE_TAG]: run a downloaded installer with the progress curl in front of the real one. It must not
+    # read our standard input: when this script itself comes through a pipe, it would eat it.
+    run_installer() {
+        # `env` sets the variables for the installer alone, so nothing leaks into the rest of this script.
+        if [ "$WRAP_OK" = 1 ]; then
+            if [ -n "${2:-}" ]; then
+                env DOGR_REAL_CURL="$REAL_CURL" DOGR_WORK="$WORK" PATH="$WORK/bin:$PATH" COLLIE_TAG="$2" sh "$1" </dev/null
+            else
+                env DOGR_REAL_CURL="$REAL_CURL" DOGR_WORK="$WORK" PATH="$WORK/bin:$PATH" sh "$1" </dev/null
+            fi
+        elif [ -n "${2:-}" ]; then
+            env COLLIE_TAG="$2" sh "$1" </dev/null
+        else
+            sh "$1" </dev/null
+        fi
     }
 
     usage() {
@@ -599,8 +718,8 @@ EOF
         else
             tailcat_arch
             tc_file=tailcat_${TC_VERSION}_linux_$TC_ARCH.tar.gz
-            curl -fsSL "$TC_RELEASE_URL/$tc_file" -o "$WORK/$tc_file" || die 5 "could not download $TC_RELEASE_URL/$tc_file"
-            curl -fsSL "$TC_RELEASE_URL/checksums.txt" -o "$WORK/checksums.txt" || die 5 "could not download $TC_RELEASE_URL/checksums.txt"
+            fetch "$TC_RELEASE_URL/$tc_file" "$WORK/$tc_file" || die 5 "could not download $TC_RELEASE_URL/$tc_file"
+            fetch "$TC_RELEASE_URL/checksums.txt" "$WORK/checksums.txt" || die 5 "could not download $TC_RELEASE_URL/checksums.txt"
             tc_want=$(awk -v f="$tc_file" '$2 == f { print $1 }' "$WORK/checksums.txt" | head -n 1)
             [ -n "$tc_want" ] || die 5 "the checksum file does not list $tc_file, so the download cannot be checked."
             if command -v sha256sum >/dev/null 2>&1; then
@@ -881,6 +1000,7 @@ EOF
     trap cleanup EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
+    make_curl_wrapper || WRAP_OK=0
 
     # The first question: which way does the phone reach this computer? Tailscale first; "no" leads to the other two.
     if [ -z "$ROUTE" ]; then
@@ -997,13 +1117,8 @@ EOF
         say "==> Installing Collie"
         # Download first, run second: with a pipe, a failed download would hand the shell an empty script and look like success.
         script=$WORK/collie-install.sh
-        curl -fsSL "$INSTALL_URL" -o "$script" || die 5 "could not download Collie's installer from $INSTALL_URL"
-        # The installer must not read our standard input: when this script itself comes through a pipe, it would eat it.
-        if [ -n "${DOGR_COLLIE_TAG:-}" ]; then
-            COLLIE_TAG=$DOGR_COLLIE_TAG sh "$script" </dev/null || die 5 "Collie's installer failed. Its output is above."
-        else
-            sh "$script" </dev/null || die 5 "Collie's installer failed. Its output is above."
-        fi
+        fetch "$INSTALL_URL" "$script" || die 5 "could not download Collie's installer from $INSTALL_URL"
+        run_installer "$script" "${DOGR_COLLIE_TAG:-}" || die 5 "Collie's installer failed. Its output is above."
         find_collie || die 5 "Collie was installed but the 'collie' command was not found. Add ~/.local/bin to your PATH and run this again."
     fi
 
@@ -1012,8 +1127,8 @@ EOF
         say ""
         say "==> Installing $MUX"
         script=$WORK/mux-install.sh
-        curl -fsSL "$MUX_URL" -o "$script" || die 5 "could not download the $MUX installer from $MUX_URL"
-        sh "$script" </dev/null || die 5 "the $MUX installer failed. Its output is above."
+        fetch "$MUX_URL" "$script" || die 5 "could not download the $MUX installer from $MUX_URL"
+        run_installer "$script" || die 5 "the $MUX installer failed. Its output is above."
         find_mux || die 5 "$MUX was installed but its command was not found. Add ~/.local/bin to your PATH and run this command again."
     fi
     say ""

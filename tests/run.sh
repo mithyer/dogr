@@ -19,7 +19,7 @@ CASE=
 # ---- the tools setup.sh may use (and the stub installer needs), linked into one folder -----------------------------------------------------------------
 BELT=$ROOT/belt
 mkdir -p "$BELT"
-for tool in sh sed grep head tail tr tee cat mktemp rm sleep uname cp mkdir chmod awk tar gzip id; do
+for tool in sh sed grep head tail tr tee cat mktemp rm sleep uname cp mkdir chmod awk tar gzip id wc date env; do
     found=$(command -v "$tool") || {
         echo "this test needs '$tool' and did not find it"
         exit 1
@@ -43,9 +43,11 @@ cat >"$STUBS/curl" <<'EOF'
 echo "curl $*" >>"$STUB_LOG"
 out=
 url=
+dump=
 while [ $# -gt 0 ]; do
     case $1 in
         -o) out=$2; shift ;;
+        -D) dump=$2; shift ;;
         --max-time) shift ;;
         -*) ;;
         *) url=$1 ;;
@@ -65,6 +67,15 @@ case $url in
         [ "${STUB_DOWNLOAD:-ok}" = ok ] || exit 22
         echo "download $url" >>"$STUB_LOG"
         case $url in
+            # A big file for the progress cases: STUB_BIG_BYTES long. The response headers go to -D, as curl does it, unless
+            # STUB_NO_LENGTH=1 (a server that does not say how long the file is). STUB_BIG_FAIL=1 breaks it.
+            */big.bin)
+                [ "${STUB_BIG_FAIL:-0}" = 0 ] || exit 22
+                head -c "${STUB_BIG_BYTES:-3000000}" /dev/zero >"$out"
+                if [ -n "$dump" ] && [ "${STUB_NO_LENGTH:-0}" != 1 ]; then
+                    printf 'HTTP/2 302\r\ncontent-length: 0\r\n\r\nHTTP/2 200\r\ncontent-length: %s\r\n\r\n' "${STUB_BIG_BYTES:-3000000}" >"$dump"
+                fi
+                ;;
             */tailcat_*_linux_*.tar.gz) cp "$STUB_TC_TARBALL" "$out" ;;
             */checksums.txt) if [ "${STUB_TC_BAD_SUM:-0}" = 1 ]; then cp "$STUB_TC_BADSUMS" "$out"; else cp "$STUB_TC_CHECKSUMS" "$out"; fi ;;
             *releases.herdr.dev/core/* | *example.test/core.sh) cp "$STUB_HC_INSTALLER" "$out" ;;
@@ -134,6 +145,10 @@ cat >"$STUBS/installer.sh" <<'EOF'
 cat >/dev/null
 [ "${STUB_INSTALLER_FAIL:-0}" = 1 ] && { echo "installer broke"; exit 1; }
 echo "installer ran tag=${COLLIE_TAG:-none}" >>"$STUB_LOG"
+case ${STUB_INSTALLER_BIG:-0} in
+    1) curl -fsSL -o "$HOME/big.bin" https://example.test/big.bin || exit 1 ;;
+    2) curl -fsSL --retry 3 https://example.test/big.bin -o "$HOME/big.bin" || exit 1 ;;
+esac
 mkdir -p "$HOME/.local/bin"
 cp "$STUB_REAL_COLLIE" "$HOME/.local/bin/collie"
 chmod +x "$HOME/.local/bin/collie"
@@ -1484,6 +1499,61 @@ expect_rc 0
 expect_out "--tailcat"
 expect_out "--derpmap-url"
 expect_out "--region"
+
+# ---- download progress ----------------------------------------------------------------------------------------------------
+# The installers (Collie's, herdr's, herdr-core's) download quietly. setup.sh puts a small `curl` in front of them that draws
+# "12.3 / 45.6 MB" while a file comes in, but only on a terminal (or when DOGR_PROGRESS=always asks for it).
+
+# No terminal (a log, a pipe): nothing is drawn and the installer's call reaches curl as it was.
+run_case "progress: no terminal, no bar" COLLIE_INSTALLED=0 STUB_INSTALLER_BIG=1 -- --tailscale --yes
+expect_rc 0
+expect_called "download https://example.test/big.bin"
+expect_not_called "curl -D"
+expect_no_out " MB"
+
+# Asked for: the installer's download is drawn with its size, its total and the percentage, and ends in 100%.
+run_case "progress: drawn when asked, URL before -o" COLLIE_INSTALLED=0 STUB_INSTALLER_BIG=2 DOGR_PROGRESS=always -- --tailscale --yes
+expect_rc 0
+expect_called "curl -D"
+expect_out "3.0 / 3.0 MB"
+expect_out "(100%)"
+expect_out "big.bin"
+run_case "progress: drawn when asked, -o before URL" COLLIE_INSTALLED=0 STUB_INSTALLER_BIG=1 DOGR_PROGRESS=always -- --tailscale --yes
+expect_rc 0
+expect_out "3.0 / 3.0 MB"
+
+# The size is rounded to a tenth of a megabyte and counted in millions of bytes, as Finder counts.
+run_case "progress: megabytes" COLLIE_INSTALLED=0 STUB_INSTALLER_BIG=1 STUB_BIG_BYTES=47080721 DOGR_PROGRESS=always -- --tailscale --yes
+expect_out "47.1 / 47.1 MB"
+
+# A server that does not say how long the file is: only what has come in.
+run_case "progress: no length" COLLIE_INSTALLED=0 STUB_INSTALLER_BIG=1 STUB_NO_LENGTH=1 DOGR_PROGRESS=always -- --tailscale --yes
+expect_rc 0
+expect_out "3.0 MB"
+expect_no_out "/ 3.0 MB"
+
+# A small file (a script, a checksum) is not worth a bar.
+run_case "progress: small files are quiet" COLLIE_INSTALLED=0 STUB_INSTALLER_BIG=1 STUB_BIG_BYTES=5000 DOGR_PROGRESS=always -- --tailscale --yes
+expect_rc 0
+expect_no_out " MB"
+
+# DOGR_PROGRESS=never switches it off even on a terminal.
+run_case "progress: never" COLLIE_INSTALLED=0 STUB_INSTALLER_BIG=1 DOGR_PROGRESS=never -- --tailscale --yes
+expect_rc 0
+expect_not_called "curl -D"
+expect_no_out " MB"
+
+# A download that fails still ends the run the way it did before: the installer stops, the script says so.
+run_case "progress: a failing download" COLLIE_INSTALLED=0 STUB_INSTALLER_BIG=1 STUB_BIG_FAIL=1 DOGR_PROGRESS=always -- --tailscale --yes
+expect_rc 5
+expect_out "installer failed"
+
+# The script's own download (the tailcat release on Linux) goes through the same wrapper.
+run_case "progress: the tailcat download" STUB_OS=Linux STUB_ARCH=x86_64 DOGR_PROGRESS=always -- --tailcat --yes
+expect_rc 0
+expect_called "curl -D"
+expect_called "download https://github.com/tailscale/tailcat/releases/download/v0.7.0/tailcat_0.7.0_linux_amd64.tar.gz"
+
 
 # ---- shellcheck, when it is there -----------------------------------------------------------------------------------------
 if command -v shellcheck >/dev/null 2>&1; then

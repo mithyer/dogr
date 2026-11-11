@@ -38,7 +38,7 @@ It is safe to run again. A step that is already done is skipped, and Collie is n
 want a fresh pairing code.
 
 **Read the script before you pipe it into a shell.** Collie is a remote terminal for your computer, so what runs on it deserves
-that. The script is one file, about 1,200 lines, most of them comments and checks: [setup.sh](setup.sh).
+that. The script is one file, about 1,300 lines, most of them comments and checks: [setup.sh](setup.sh).
 
 ## Routes
 
@@ -135,6 +135,7 @@ curl -fsSL https://raw.githubusercontent.com/mithyer/dogr/main/setup.sh | sh -s 
 | `DOGR_COLLIE_INSTALL_URL` | Where Collie's installer comes from. Default `https://colliepwa.dev/install.sh`. |
 | `DOGR_HERDR_INSTALL_URL`, `DOGR_HERDR_CORE_INSTALL_URL` | Where the installers of herdr and herdr-core come from. Defaults `https://herdr.dev/install.sh` and `https://releases.herdr.dev/core/install.sh`. |
 | `DOGR_TAILCAT_VERSION`, `DOGR_TAILCAT_RELEASE_URL` | Linux: which tailcat release to download (default `0.7.0`) and where its files are (default `https://github.com/tailscale/tailcat/releases/download/v<version>`). On macOS Homebrew decides the version. |
+| `DOGR_PROGRESS` | `always`, `never` or `auto` (default). While the installers download, a line such as `collie-1.28.1-macos-arm64.tar.gz  12.3 / 47.1 MB  (26%)  0.3 MB/s` is drawn. `auto` draws it on a terminal only, so a log or a pipe stays clean; files under 1 MB (scripts, checksums) are never drawn. Nothing about the download changes: every call still reaches the real `curl` with its own options. |
 | `DOGR_TTY` | Where answers are read from. Default `/dev/tty`. Tests point it at a file. |
 | `DOGR_TRIES`, `DOGR_POLL_DELAY` | How often, and how many seconds apart, to check that Collie answers. Default 20 and 1. |
 
@@ -219,7 +220,7 @@ Collie does not pick up), the terminal program (named, asked for, installed, not
 given, settings added, replaced or already there, a wide bind from an earlier run, the proxy not answering, Collie not reading the settings), the local-network route
 (which addresses are offered, one or several, `--host` and its checks, Linux's `ip`, another port, no address, the risk being named before the question),
 the tailcat route (macOS with Homebrew and Linux with a downloaded release for three processors, a wrong or unlisted checksum, no Homebrew, a key that exists or fails to be made, a region or relay map, the service not starting or printing no address, an old log that must not be trusted, another port, settings already there or older, Collie not reading them; where the system has `plutil` it also checks that the launchd file is a valid property list),
-the Tailscale route refusing leftovers, answering at the terminal, no terminal, wrong options, running through a pipe, and a download that stops half way. `shellcheck` runs too when it is installed.
+the Tailscale route refusing leftovers, answering at the terminal, no terminal, wrong options, running through a pipe, a download that stops half way, and the progress line (drawn when asked, quiet without a terminal or with `DOGR_PROGRESS=never`, the size in megabytes, a server that gives no length, small files, a failing download, both orders of `-o` and the address). `shellcheck` runs too when it is installed.
 
 ## What has and has not been checked
 
@@ -240,6 +241,7 @@ the Tailscale route refusing leftovers, answering at the terminal, no terminal, 
 | That a leftover `COLLIE_ALLOWED_ORIGINS` of the proxy route does not stop a phone from pairing over the tunnel | A real Collie bridge: pairing with an `Origin` of the phone's own address returned 200 with and without the setting |
 | That a Collie behind `tailcat serve` pairs and answers through the tunnel with `COLLIE_SKIP_SERVE=1`, `COLLIE_PUBLIC_HOSTS=127.0.0.1:<port>` and a `COLLIE_PUBLIC_URL` carrying the address; that the link `collie pair` prints with it is 200 characters and fits a QR code | Real Collie and real tailcat (a 0.7.0 server with a saved key and a newer client), an iPhone simulator, and two real iPhones (Wi-Fi and mobile data) with a test app |
 | The real installers of herdr and herdr-core, and a real `herdr status server` text when it is not running | Not yet (the tests use stubs; the "not running" wording was read from a real Herdr) |
+| The progress line, drawn by the real `curl` against the real Collie release on GitHub (`2.0 / 47.1 MB  (4%)  0.3 MB/s`, then curl's own timeout message and exit code 28 passed through, no leftover files) | Run on the author's Mac with `DOGR_PROGRESS=always` and an 8-second limit. Not yet seen in a real terminal window with Collie's own installer. |
 | A real `collie start` with a real Tailscale, with or without HTTPS certificates | Not yet |
 | A real `collie start` for `--proxy` or `--lan` (the service reading the `.env` lines), a real Caddy in front, a phone behind it | Not yet. The service reading the `.env` is only inferred from the `status` check above. |
 | The Linux service file under a real `systemd --user`, `loginctl enable-linger`, and `brew install tailcat` run by the script on a Mac that had no tailcat | Not yet (the tests use stubs; the unit file follows systemd's documented format) |
