@@ -19,12 +19,17 @@ CASE=
 # ---- the tools setup.sh may use (and the stub installer needs), linked into one folder -----------------------------------------------------------------
 BELT=$ROOT/belt
 mkdir -p "$BELT"
-for tool in sh sed grep head tail tr tee cat mktemp rm sleep uname cp mkdir chmod awk; do
+for tool in sh sed grep head tail tr tee cat mktemp rm sleep uname cp mkdir chmod awk tar gzip id; do
     found=$(command -v "$tool") || {
         echo "this test needs '$tool' and did not find it"
         exit 1
     }
     ln -s "$found" "$BELT/$tool"
+done
+
+# One checksum tool is enough: Linux has sha256sum, macOS has shasum.
+for tool in sha256sum shasum; do
+    if found=$(command -v "$tool"); then ln -s "$found" "$BELT/$tool"; fi
 done
 
 # ---- the stubs ----------------------------------------------------------------------------------------------------------
@@ -60,6 +65,8 @@ case $url in
         [ "${STUB_DOWNLOAD:-ok}" = ok ] || exit 22
         echo "download $url" >>"$STUB_LOG"
         case $url in
+            */tailcat_*_linux_*.tar.gz) cp "$STUB_TC_TARBALL" "$out" ;;
+            */checksums.txt) if [ "${STUB_TC_BAD_SUM:-0}" = 1 ]; then cp "$STUB_TC_BADSUMS" "$out"; else cp "$STUB_TC_CHECKSUMS" "$out"; fi ;;
             *releases.herdr.dev/core/* | *example.test/core.sh) cp "$STUB_HC_INSTALLER" "$out" ;;
             *herdr.dev/install.sh*) cp "$STUB_HERDR_INSTALLER" "$out" ;;
             *) cp "$STUB_INSTALLER" "$out" ;;
@@ -201,7 +208,104 @@ mkdir -p "$HOME/.local/bin"
 cp "$STUB_HERDR" "$HOME/.local/bin/herdr"
 chmod +x "$HOME/.local/bin/herdr"
 EOF
-chmod +x "$STUBS/curl" "$STUBS/collie" "$STUBS/installer.sh" "$STUBS/hc" "$STUBS/herdr" "$STUBS/hc-installer.sh" "$STUBS/herdr-installer.sh" "$STUBS/ifconfig" "$STUBS/ip"
+# uname: reports the system the case asks for (STUB_OS, STUB_ARCH) and the real one otherwise, so the macOS and Linux
+# branches of setup.sh can both be tried on either.
+REAL_UNAME=$(command -v uname)
+cat >"$STUBS/uname" <<EOF
+#!/bin/sh
+case \$1 in
+    -s) echo "\${STUB_OS:-\$("$REAL_UNAME" -s)}" ;;
+    -m) echo "\${STUB_ARCH:-\$("$REAL_UNAME" -m)}" ;;
+    *) exec "$REAL_UNAME" "\$@" ;;
+esac
+EOF
+
+# tailcat: the key commands of the real one (STUB_GENKEY_FAILS: how many times making a key fails first, the way the
+# real one does when it cannot pick a relay region).
+cat >"$STUBS/tailcat" <<'EOF'
+#!/bin/sh
+echo "tailcat $*" >>"$STUB_LOG"
+case $1 in
+    version) echo "v0.7.0" ;;
+    genkey)
+        case " $* " in
+            *" --list "*) cat "$HOME/.stubkeys" 2>/dev/null ;;
+            *)
+                n=$(cat "$HOME/.stubgenkey" 2>/dev/null || echo 0)
+                if [ "$n" -lt "${STUB_GENKEY_FAILS:-0}" ]; then
+                    echo $((n + 1)) >"$HOME/.stubgenkey"
+                    echo "couldn't determine the closest DERP region; specify --region" >&2
+                    exit 1
+                fi
+                echo herdogr >>"$HOME/.stubkeys"
+                echo "# wrote file to $HOME/keys/herdogr.private.json" >&2
+                echo "$STUB_TC_ADDRESS"
+                ;;
+        esac
+        ;;
+esac
+exit 0
+EOF
+
+# brew: `install` puts the stub tailcat next to it, where the sandbox PATH finds it.
+cat >"$STUBS/brew" <<'EOF'
+#!/bin/sh
+echo "brew $*" >>"$STUB_LOG"
+[ "${STUB_BREW_FAIL:-0}" = 1 ] && { echo "brew broke"; exit 1; }
+case $1 in
+    install) cp "$STUB_TAILCAT" "${0%/*}/tailcat"; chmod +x "${0%/*}/tailcat" ;;
+esac
+exit 0
+EOF
+
+# launchctl and systemctl: a service that starts prints its address into the log file, the way `tailcat serve` does.
+# STUB_TC_NO_ADDRESS: it runs but prints none. STUB_LAUNCH_FAIL: starting it fails.
+cat >"$STUBS/launchctl" <<'EOF'
+#!/bin/sh
+echo "launchctl $*" >>"$STUB_LOG"
+case $1 in
+    bootstrap)
+        [ "${STUB_LAUNCH_FAIL:-0}" = 1 ] && { echo "bootstrap failed"; exit 5; }
+        if [ "${STUB_TC_NO_ADDRESS:-0}" != 1 ]; then
+            mkdir -p "$HOME/.local/state/dogr"
+            echo "# Server listening with saved key \"herdogr\": $STUB_TC_ADDRESS" >>"$HOME/.local/state/dogr/tailcat.log"
+        fi
+        ;;
+esac
+exit 0
+EOF
+cat >"$STUBS/systemctl" <<'EOF'
+#!/bin/sh
+echo "systemctl $*" >>"$STUB_LOG"
+case " $* " in
+    *" restart "*)
+        [ "${STUB_LAUNCH_FAIL:-0}" = 1 ] && { echo "restart failed"; exit 5; }
+        if [ "${STUB_TC_NO_ADDRESS:-0}" != 1 ]; then
+            mkdir -p "$HOME/.local/state/dogr"
+            echo "# Server listening with saved key \"herdogr\": $STUB_TC_ADDRESS" >>"$HOME/.local/state/dogr/tailcat.log"
+        fi
+        ;;
+esac
+exit 0
+EOF
+
+# The tailcat release the Linux branch downloads: a tarball with the stub inside, and a checksum file that names it for
+# every architecture (plus a wrong one for the case about a mismatch).
+TC_ADDRESS=tc$(awk 'BEGIN { for (i = 0; i < 152; i++) printf "a" }')
+TCDIR=$ROOT/tcrelease
+mkdir -p "$TCDIR/pack"
+cp "$STUBS/tailcat" "$TCDIR/pack/tailcat"
+chmod +x "$TCDIR/pack/tailcat"
+(cd "$TCDIR/pack" && tar czf ../tailcat.tar.gz tailcat)
+if command -v sha256sum >/dev/null 2>&1; then TCSUM=$(sha256sum "$TCDIR/tailcat.tar.gz" | awk '{print $1}'); else TCSUM=$(shasum -a 256 "$TCDIR/tailcat.tar.gz" | awk '{print $1}'); fi
+BADSUM=0000000000000000000000000000000000000000000000000000000000000000
+for arch in amd64 arm64 armv7; do
+    echo "$TCSUM  tailcat_0.7.0_linux_$arch.tar.gz" >>"$TCDIR/checksums.txt"
+    echo "$BADSUM  tailcat_0.7.0_linux_$arch.tar.gz" >>"$TCDIR/badsums.txt"
+done
+echo "$BADSUM  tailcat_0.7.0_windows_amd64.zip" >>"$TCDIR/checksums.txt"
+
+chmod +x "$STUBS/curl" "$STUBS/collie" "$STUBS/installer.sh" "$STUBS/hc" "$STUBS/herdr" "$STUBS/hc-installer.sh" "$STUBS/herdr-installer.sh" "$STUBS/ifconfig" "$STUBS/ip" "$STUBS/uname" "$STUBS/tailcat" "$STUBS/brew" "$STUBS/launchctl" "$STUBS/systemctl"
 
 # ---- the harness --------------------------------------------------------------------------------------------------------
 
@@ -223,6 +327,10 @@ quote() {
 #   ASK=a,b,c         what the person types at each question, in order, one answer per comma (an empty answer is a bare Enter)
 #   ENVFILE=text      a Collie .env file that is already there
 #   LINUX=1           a computer that lists its addresses with `ip` and has no `ifconfig`
+#   TAILCAT_INSTALLED=1  a computer that has tailcat already
+#   TC_KEY=1          a saved tailcat key named herdogr exists already
+#   NO_BREW=1         a computer without Homebrew
+#   TC_OLDLOG=1       the log of an earlier tailcat service run is there, with another address in it
 #   PIPE=1            the whole script arrives through a pipe, the way `curl ... | sh` runs it
 #   CUT=1             like PIPE=1 but the download stops half way
 run_case() {
@@ -246,6 +354,11 @@ run_case() {
         echo "export STUB_HERDR_INSTALLER=$STUBS/herdr-installer.sh"
         echo "export STUB_HC=$STUBS/hc"
         echo "export STUB_HERDR=$STUBS/herdr"
+        echo "export STUB_TAILCAT=$STUBS/tailcat"
+        echo "export STUB_TC_ADDRESS=$TC_ADDRESS"
+        echo "export STUB_TC_TARBALL=$TCDIR/tailcat.tar.gz"
+        echo "export STUB_TC_CHECKSUMS=$TCDIR/checksums.txt"
+        echo "export STUB_TC_BADSUMS=$TCDIR/badsums.txt"
         echo "export DOGR_TTY=$sandbox/tty"
         echo "export DOGR_TRIES=2"
         echo "export DOGR_POLL_DELAY=0"
@@ -255,6 +368,10 @@ run_case() {
     herdr_installed=0
     muxask=0
     linux=0
+    tc_installed=0
+    tc_key=0
+    no_brew=0
+    tc_oldlog=0
     ask=
     envfile=
     mode="file"
@@ -265,6 +382,10 @@ run_case() {
             HERDR_INSTALLED=1) herdr_installed=1 ;;
             MUXASK=1) muxask=1 ;;
             LINUX=1) linux=1 ;;
+            TAILCAT_INSTALLED=1) tc_installed=1 ;;
+            TC_KEY=1) tc_key=1 ;;
+            NO_BREW=1) no_brew=1 ;;
+            TC_OLDLOG=1) tc_oldlog=1 ;;
             ASK=*) ask=${1#ASK=} ;;
             ENVFILE=*) envfile=${1#ENVFILE=} ;;
             PIPE=1) mode="pipe" ;;
@@ -285,6 +406,14 @@ run_case() {
     if [ "$hc_installed" = 1 ]; then cp "$STUBS/hc" "$sandbox/path/hc"; fi
     if [ "$herdr_installed" = 1 ]; then cp "$STUBS/herdr" "$sandbox/path/herdr"; fi
     if [ "$linux" = 1 ]; then cp "$STUBS/ip" "$sandbox/path/ip"; else cp "$STUBS/ifconfig" "$sandbox/path/ifconfig"; fi
+    for stub in uname launchctl systemctl; do cp "$STUBS/$stub" "$sandbox/path/$stub"; done
+    if [ "$no_brew" != 1 ]; then cp "$STUBS/brew" "$sandbox/path/brew"; fi
+    if [ "$tc_installed" = 1 ]; then cp "$STUBS/tailcat" "$sandbox/path/tailcat"; fi
+    if [ "$tc_key" = 1 ]; then echo herdogr >"$sandbox/home/.stubkeys"; fi
+    if [ "$tc_oldlog" = 1 ]; then
+        mkdir -p "$sandbox/home/.local/state/dogr"
+        echo "# Server listening with saved key \"herdogr\": tc$(awk 'BEGIN { for (i = 0; i < 152; i++) printf "b" }')" >"$sandbox/home/.local/state/dogr/tailcat.log"
+    fi
     # With no ASK there is no terminal at all: DOGR_TTY keeps pointing at a file that does not exist.
     if [ -n "$ask" ]; then printf '%s\n' "$ask" | tr ',' '\n' >"$sandbox/tty"; fi
     if [ -n "$envfile" ]; then
@@ -333,6 +462,21 @@ expect_no_env() { if grep -qF -- "$1" "$sandbox/home/.config/collie/.env" 2>/dev
 # expect_env_line / expect_no_env_line: the .env has / lacks a whole line that is exactly TEXT
 expect_env_line() { if grep -qxF -- "$1" "$sandbox/home/.config/collie/.env" 2>/dev/null; then ok; else bad ".env has no line: $1"; fi; }
 expect_no_env_line() { if grep -qxF -- "$1" "$sandbox/home/.config/collie/.env" 2>/dev/null; then bad ".env has the line: $1"; else ok; fi; }
+# expect_file / expect_no_file PATH: a file (path relative to the sandbox home) exists / does not
+expect_file() { if [ -e "$sandbox/home/$1" ]; then ok; else bad "no file in the home folder: $1"; fi; }
+expect_no_file() { if [ -e "$sandbox/home/$1" ]; then bad "unexpected file in the home folder: $1"; else ok; fi; }
+# expect_file_has PATH TEXT: that file has that text
+expect_file_has() { if grep -qF -- "$2" "$sandbox/home/$1" 2>/dev/null; then ok; else bad "home folder file $1 lacks: $2"; fi; }
+# expect_plist_valid: the launchd file the script wrote is a valid property list (checked where the system has plutil)
+expect_plist_valid() {
+    command -v plutil >/dev/null 2>&1 || return 0
+    if plutil -lint "$sandbox/home/$PLIST" >/dev/null 2>&1; then ok; else bad "the launchd file is not a valid property list"; fi
+}
+# expect_count TEXT N: the stubs saw exactly N calls that have that text
+expect_count() {
+    n=$(grep -cF -- "$1" "$LOG")
+    if [ "$n" = "$2" ]; then ok; else bad "$n calls with '$1', wanted $2"; fi
+}
 # expect_order A B: the first call with A comes before the first call with B
 expect_order() {
     a=$(grep -nF -- "$1" "$LOG" | head -n 1 | cut -d: -f1)
@@ -826,7 +970,7 @@ expect_env_line "COLLIE_PUBLIC_URL=https://collie.example.com"
 expect_out "public address"
 
 # The first question leads here too: not Tailscale, then the reverse proxy (1), then the address, then "Continue?".
-run_case "proxy: through the route questions" ASK=n,1,https://collie.example.com,y --
+run_case "proxy: through the route questions" ASK=n,2,https://collie.example.com,y --
 expect_rc 0
 expect_env_line "COLLIE_PUBLIC_URL=https://collie.example.com"
 run_case "proxy: a second answer that is no choice" ASK=n,7 --
@@ -1005,7 +1149,7 @@ expect_rc 0
 expect_env_line "COLLIE_HOST=192.168.1.30"
 
 # Asked by the route questions: not Tailscale, then the local network (2).
-run_case "lan: through the route questions" STUB_LOCAL_URL=http://192.168.1.20:8787 ASK=n,2,y --
+run_case "lan: through the route questions" STUB_LOCAL_URL=http://192.168.1.20:8787 ASK=n,3,y --
 expect_rc 0
 expect_env_line "COLLIE_HOST=192.168.1.20"
 
@@ -1052,6 +1196,294 @@ expect_out "COLLIE_HOST"
 expect_not_called "collie start"
 run_case "tailscale with a loopback host" ENVFILE="COLLIE_HOST=127.0.0.1" -- --tailscale --yes
 expect_rc 0
+
+# ---- the tailcat route ----------------------------------------------------------------------------------------------------
+
+PLIST=Library/LaunchAgents/dev.dogr.tailcat.plist
+UNIT=.config/systemd/user/dogr-tailcat.service
+TCLOG=.local/state/dogr/tailcat.log
+
+# macOS from nothing: Homebrew installs tailcat, a saved key is made, launchd runs the service, the settings go into the
+# .env, and the pairing code comes last.
+run_case "tailcat: macOS from nothing" STUB_OS=Darwin -- --tailcat --yes
+expect_rc 0
+expect_called "brew install tailcat"
+expect_called "tailcat genkey --key=herdogr --fixed-region"
+expect_called "launchctl bootstrap gui/"
+expect_file "$PLIST"
+expect_file_has "$PLIST" "<string>--key=herdogr</string>"
+expect_file_has "$PLIST" "<string>8787</string>"
+expect_file_has "$PLIST" "$TCLOG"
+expect_plist_valid
+expect_env_line "COLLIE_SKIP_SERVE=1"
+expect_env_line "COLLIE_PUBLIC_HOSTS=127.0.0.1:8787"
+expect_env_line "COLLIE_PUBLIC_URL=http://tailcat.invalid/$TC_ADDRESS"
+expect_order "brew install tailcat" "tailcat genkey --key=herdogr"
+expect_order "tailcat genkey --key=herdogr" "launchctl bootstrap"
+expect_order "launchctl bootout" "launchctl bootstrap"
+expect_order "launchctl bootstrap" "collie start"
+expect_order "collie start" "collie pair"
+expect_not_called "health http://tailcat.invalid"
+expect_not_called "systemctl"
+expect_out "ABCD2345"
+expect_out "several seconds"
+# The address is a secret: the script never prints it itself (only Collie's QR code does).
+expect_no_out "$TC_ADDRESS"
+
+# The plan says everything, changes nothing.
+run_case "tailcat: dry run on macOS" STUB_OS=Darwin -- --tailcat --dry-run
+expect_rc 0
+expect_out "brew install tailcat"
+expect_out "saved tailcat key"
+expect_out "launchd"
+expect_out "COLLIE_PUBLIC_URL"
+expect_out "<your tailcat address>"
+expect_out "secret"
+expect_out "Dry run: nothing was changed."
+expect_not_called "brew"
+expect_not_called "launchctl"
+expect_not_called "tailcat genkey --key"
+expect_not_called "collie start"
+expect_no_file "$PLIST"
+expect_no_file ".config/collie/.env"
+
+run_case "tailcat: dry run on Linux names the download" STUB_OS=Linux STUB_ARCH=x86_64 -- --tailcat --dry-run
+expect_rc 0
+expect_out "tailcat_0.7.0_linux_amd64.tar.gz"
+expect_out "systemd"
+expect_not_called "download"
+expect_no_file ".local/bin/tailcat"
+
+run_case "tailcat: declined at the question" STUB_OS=Darwin ASK=n -- --tailcat
+expect_rc 6
+expect_not_called "brew"
+expect_not_called "launchctl"
+expect_no_file "$PLIST"
+
+# Linux from nothing: the release is downloaded and its checksum checked, systemd --user runs the service.
+run_case "tailcat: Linux from nothing" STUB_OS=Linux STUB_ARCH=x86_64 -- --tailcat --yes
+expect_rc 0
+expect_called "download https://github.com/tailscale/tailcat/releases/download/v0.7.0/tailcat_0.7.0_linux_amd64.tar.gz"
+expect_called "download https://github.com/tailscale/tailcat/releases/download/v0.7.0/checksums.txt"
+expect_not_called "brew"
+expect_not_called "launchctl"
+expect_file ".local/bin/tailcat"
+expect_called "tailcat genkey --key=herdogr --fixed-region"
+expect_file "$UNIT"
+expect_file_has "$UNIT" "serve --key=herdogr 8787"
+expect_file_has "$UNIT" "$TCLOG"
+expect_called "systemctl --user daemon-reload"
+expect_called "systemctl --user enable dogr-tailcat.service"
+expect_called "systemctl --user restart dogr-tailcat.service"
+expect_order "systemctl --user restart" "collie start"
+expect_env_line "COLLIE_PUBLIC_URL=http://tailcat.invalid/$TC_ADDRESS"
+expect_out "enable-linger"
+expect_no_out "$TC_ADDRESS"
+
+run_case "tailcat: Linux arm64" STUB_OS=Linux STUB_ARCH=aarch64 -- --tailcat --yes
+expect_rc 0
+expect_called "tailcat_0.7.0_linux_arm64.tar.gz"
+
+run_case "tailcat: Linux armv7" STUB_OS=Linux STUB_ARCH=armv7l -- --tailcat --yes
+expect_rc 0
+expect_called "tailcat_0.7.0_linux_armv7.tar.gz"
+
+run_case "tailcat: a processor with no release" STUB_OS=Linux STUB_ARCH=i686 -- --tailcat --yes
+expect_rc 5
+expect_out "i686"
+expect_not_called "download"
+expect_not_called "collie start"
+
+run_case "tailcat: the release address can be chosen" STUB_OS=Linux STUB_ARCH=x86_64 DOGR_TAILCAT_RELEASE_URL=https://example.test/tailcat -- --tailcat --yes
+expect_rc 0
+expect_called "download https://example.test/tailcat/tailcat_0.7.0_linux_amd64.tar.gz"
+expect_called "download https://example.test/tailcat/checksums.txt"
+
+run_case "tailcat: a version the checksum file does not list" STUB_OS=Linux STUB_ARCH=x86_64 DOGR_TAILCAT_VERSION=0.8.0 -- --tailcat --yes
+expect_rc 5
+expect_out "checksum"
+expect_no_file ".local/bin/tailcat"
+expect_not_called "collie start"
+
+run_case "tailcat: the checksum does not match" STUB_OS=Linux STUB_ARCH=x86_64 STUB_TC_BAD_SUM=1 -- --tailcat --yes
+expect_rc 5
+expect_out "checksum"
+expect_no_file ".local/bin/tailcat"
+expect_not_called "systemctl"
+expect_not_called "collie start"
+
+run_case "tailcat: the download fails" STUB_OS=Linux STUB_ARCH=x86_64 STUB_DOWNLOAD=fail -- --tailcat --yes
+expect_rc 5
+expect_out "could not download"
+expect_not_called "collie start"
+
+# macOS needs Homebrew: the releases have no macOS file.
+run_case "tailcat: macOS without Homebrew" STUB_OS=Darwin NO_BREW=1 -- --tailcat --yes
+expect_rc 5
+expect_out "Homebrew"
+expect_not_called "collie start"
+
+run_case "tailcat: Homebrew fails" STUB_OS=Darwin STUB_BREW_FAIL=1 -- --tailcat --yes
+expect_rc 5
+expect_out "brew install tailcat"
+expect_not_called "tailcat genkey"
+expect_not_called "collie start"
+
+run_case "tailcat: already installed" STUB_OS=Darwin TAILCAT_INSTALLED=1 -- --tailcat --yes
+expect_rc 0
+expect_out "tailcat is already installed"
+expect_not_called "brew"
+expect_not_called "download"
+
+# The key: made once, kept after that. Its relay region is baked into the address, which keeps the address the same.
+run_case "tailcat: the key exists already" STUB_OS=Darwin TAILCAT_INSTALLED=1 TC_KEY=1 -- --tailcat --yes
+expect_rc 0
+expect_out "saved key"
+expect_not_called "tailcat genkey --key"
+
+run_case "tailcat: the key exists, a region is asked for" STUB_OS=Darwin TAILCAT_INSTALLED=1 TC_KEY=1 -- --tailcat --region fra --yes
+expect_rc 0
+expect_out "is kept"
+expect_not_called "--region=fra"
+
+run_case "tailcat: picking a region works on the third try" STUB_OS=Darwin TAILCAT_INSTALLED=1 STUB_GENKEY_FAILS=2 -- --tailcat --yes
+expect_rc 0
+expect_count "tailcat genkey --key=herdogr --fixed-region" 3
+
+run_case "tailcat: picking a region never works" STUB_OS=Darwin TAILCAT_INSTALLED=1 STUB_GENKEY_FAILS=9 -- --tailcat --yes
+expect_rc 4
+expect_out "--region"
+expect_not_called "launchctl"
+expect_not_called "collie start"
+
+run_case "tailcat: a region is named" STUB_OS=Darwin TAILCAT_INSTALLED=1 -- --tailcat --region fra --yes
+expect_rc 0
+expect_called "tailcat genkey --key=herdogr --region=fra"
+expect_not_called "--fixed-region"
+
+run_case "tailcat: a region is named with =" STUB_OS=Darwin TAILCAT_INSTALLED=1 -- --tailcat --region=nyc --yes
+expect_rc 0
+expect_called "tailcat genkey --key=herdogr --region=nyc"
+
+run_case "tailcat: --region needs a value" -- --tailcat --region
+expect_rc 1
+expect_out "--region needs a value"
+
+# A relay map (the phone's field for it): both ends must use the same one.
+run_case "tailcat: a relay map" STUB_OS=Darwin TAILCAT_INSTALLED=1 -- --tailcat --derpmap-url https://relay.example.com/map.json --yes
+expect_rc 0
+expect_called "tailcat genkey --key=herdogr --derpmap-url=https://relay.example.com/map.json --fixed-region"
+expect_file_has "$PLIST" "<string>--derpmap-url=https://relay.example.com/map.json</string>"
+
+run_case "tailcat: a relay map on Linux, with = and a query" STUB_OS=Linux STUB_ARCH=x86_64 -- --tailcat '--derpmap-url=https://relay.example.com/map.json?a=1&b=2' --yes
+expect_rc 0
+expect_file_has "$UNIT" "--derpmap-url=https://relay.example.com/map.json?a=1&b=2"
+
+run_case "tailcat: the & of a relay map is escaped in the plist" STUB_OS=Darwin TAILCAT_INSTALLED=1 -- --tailcat '--derpmap-url=https://relay.example.com/map.json?a=1&b=2' --yes
+expect_rc 0
+expect_file_has "$PLIST" "map.json?a=1&amp;b=2"
+expect_plist_valid
+
+run_case "tailcat: a relay map implies the route" STUB_OS=Darwin TAILCAT_INSTALLED=1 -- --derpmap-url https://relay.example.com/map.json --yes
+expect_rc 0
+expect_called "tailcat genkey --key=herdogr"
+
+run_case "tailcat: a relay map must be https" -- --tailcat --derpmap-url http://relay.example.com/map.json
+expect_rc 1
+expect_out "https://"
+
+run_case "tailcat: a relay map with no host" -- --tailcat --derpmap-url https://
+expect_rc 1
+
+run_case "tailcat: a relay map with a user name" -- --tailcat --derpmap-url https://me@relay.example.com/map.json
+expect_rc 1
+expect_out "user name"
+
+# shellcheck disable=SC2016  # the dollar sign is the point: it must reach the script as it is
+run_case "tailcat: a relay map with odd characters" -- --tailcat --derpmap-url 'https://relay.example.com/$HOME'
+expect_rc 1
+expect_out "characters"
+
+run_case "tailcat: a relay map with a space" -- --tailcat --derpmap-url 'https://relay.example.com/a b'
+expect_rc 1
+
+run_case "tailcat: --derpmap-url needs a value" -- --tailcat --derpmap-url
+expect_rc 1
+expect_out "--derpmap-url needs a value"
+
+run_case "tailcat: two ways at once" -- --tailcat --proxy --url https://collie.example.com
+expect_rc 1
+expect_out "choose one way"
+
+# The service and its address.
+run_case "tailcat: the service prints no address, an old log is not trusted" STUB_OS=Darwin TAILCAT_INSTALLED=1 STUB_TC_NO_ADDRESS=1 TC_OLDLOG=1 -- --tailcat --yes
+expect_rc 4
+expect_out "address"
+expect_not_called "collie start"
+expect_not_called "collie pair"
+expect_no_env "tailcat.invalid"
+
+run_case "tailcat: a new address replaces the one in an old log" STUB_OS=Darwin TAILCAT_INSTALLED=1 TC_OLDLOG=1 -- --tailcat --yes
+expect_rc 0
+expect_env_line "COLLIE_PUBLIC_URL=http://tailcat.invalid/$TC_ADDRESS"
+
+run_case "tailcat: launchd cannot start the service" STUB_OS=Darwin TAILCAT_INSTALLED=1 STUB_LAUNCH_FAIL=1 -- --tailcat --yes
+expect_rc 4
+expect_out "launchctl"
+expect_not_called "collie start"
+
+run_case "tailcat: systemd cannot start the service" STUB_OS=Linux STUB_ARCH=x86_64 TAILCAT_INSTALLED=1 STUB_LAUNCH_FAIL=1 -- --tailcat --yes
+expect_rc 4
+expect_out "systemctl"
+expect_not_called "collie start"
+
+# What goes into Collie's .env.
+run_case "tailcat: another Collie port" STUB_OS=Darwin TAILCAT_INSTALLED=1 ENVFILE="COLLIE_PORT=9000" -- --tailcat --yes
+expect_rc 0
+expect_file_has "$PLIST" "<string>9000</string>"
+expect_env_line "COLLIE_PUBLIC_HOSTS=127.0.0.1:9000"
+expect_env_line "COLLIE_PUBLIC_URL=http://tailcat.invalid:9000/$TC_ADDRESS"
+
+run_case "tailcat: a wide bind is taken back" STUB_OS=Darwin TAILCAT_INSTALLED=1 ENVFILE="COLLIE_HOST=192.168.1.5" -- --tailcat --yes
+expect_rc 0
+expect_env_line "COLLIE_HOST=127.0.0.1"
+
+# Measured with a real Collie bridge: a leftover COLLIE_ALLOWED_ORIGINS of the proxy route does not stop a phone that
+# pairs from its own origin, so it is left alone.
+run_case "tailcat: a leftover COLLIE_ALLOWED_ORIGINS is left alone" STUB_OS=Darwin TAILCAT_INSTALLED=1 ENVFILE="COLLIE_ALLOWED_ORIGINS=https://collie.example.com" -- --tailcat --yes
+expect_rc 0
+expect_env_line "COLLIE_ALLOWED_ORIGINS=https://collie.example.com"
+
+run_case "tailcat: the same settings again change nothing" STUB_OS=Darwin TAILCAT_INSTALLED=1 TC_KEY=1 ENVFILE="COLLIE_SKIP_SERVE=1
+COLLIE_PUBLIC_HOSTS=127.0.0.1:8787
+COLLIE_PUBLIC_URL=http://tailcat.invalid/$TC_ADDRESS" -- --tailcat --yes
+expect_rc 0
+expect_not_called "collie restart"
+expect_called "launchctl bootout"
+
+run_case "tailcat: an older address is replaced and Collie restarted" STUB_OS=Darwin TAILCAT_INSTALLED=1 TC_KEY=1 ENVFILE="COLLIE_SKIP_SERVE=1
+COLLIE_PUBLIC_HOSTS=127.0.0.1:8787
+COLLIE_PUBLIC_URL=http://tailcat.invalid/tcOLD" -- --tailcat --yes
+expect_rc 0
+expect_env_line "COLLIE_PUBLIC_URL=http://tailcat.invalid/$TC_ADDRESS"
+expect_called "collie restart"
+
+run_case "tailcat: Collie ignores the settings" STUB_OS=Darwin TAILCAT_INSTALLED=1 STUB_IGNORE_ENV=1 -- --tailcat --yes
+expect_rc 3
+expect_out "did not pick up"
+expect_not_called "collie pair"
+
+# The questions: tailcat is the first of the three "other" ways.
+run_case "tailcat: through the route questions" STUB_OS=Darwin TAILCAT_INSTALLED=1 ASK=n,1,y --
+expect_rc 0
+expect_called "tailcat genkey --key=herdogr"
+expect_called "collie pair"
+
+run_case "help names the tailcat route" -- --help
+expect_rc 0
+expect_out "--tailcat"
+expect_out "--derpmap-url"
+expect_out "--region"
 
 # ---- shellcheck, when it is there -----------------------------------------------------------------------------------------
 if command -v shellcheck >/dev/null 2>&1; then

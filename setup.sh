@@ -1,19 +1,22 @@
 #!/bin/sh
 # dogr setup.sh - put Collie on this computer and pair your phone with it.
 #
-# Three ways for the phone to reach this computer (--tailscale, --proxy, --lan; without one the script asks). It calls the
+# Four ways for the phone to reach this computer (--tailscale, --tailcat, --proxy, --lan; without one the script asks). It calls the
 # commands of the programs it sets up and checks the result:
 #   1. install Collie, only if it is not installed yet (Collie's own installer);
 #   2. make sure the terminal program Collie drives is there and running: herdr or herdr-core (--mux picks one). A missing
 #      one is installed with its own installer; herdr-core is started with `hc server start`; herdr has to be opened by you;
 #   3. `collie start`: runs Collie in the background. Over Tailscale it also publishes Collie on your tailnet; behind your
-#      own reverse proxy (--proxy --url https://...) or on the local network (--lan) Collie publishes nothing itself;
+#      own reverse proxy (--proxy --url https://...), on the local network (--lan) or through tailcat (--tailcat) Collie
+#      publishes nothing itself. For tailcat this script first installs tailcat, makes a saved key (so the address stays
+#      the same) and runs `tailcat serve` as a background service of your own user (launchd or systemd --user);
 #   4. check that Collie answers where the phone will look for it, and drives the program you picked;
 #   5. `collie pair`, last of all, so the one-time code has all of its ten minutes left.
 # Lines of Collie's own .env may change, each only in the way the plan says before you agree: COLLIE_MUX, when it names the
 # other terminal program than the one you picked; on a tailnet without HTTPS certificates (Headscale, for one)
 # COLLIE_SERVE_MODE=http (with your agreement or --http); and for --proxy and --lan the settings that route needs
 # (COLLIE_SKIP_SERVE, COLLIE_PUBLIC_URL and friends). A line that is there is replaced where it stands, a missing one is added.
+# The tailcat route also writes a service file and a log (see the README for where, and how to undo it).
 #
 # Run it:        curl -fsSL https://raw.githubusercontent.com/mithyer/dogr/main/setup.sh | sh
 # Options go after `-s --`:   ... | sh -s -- --tailscale --yes
@@ -28,6 +31,8 @@
 #   DOGR_COLLIE_INSTALL_URL   where Collie's installer comes from (default https://colliepwa.dev/install.sh)
 #   DOGR_HERDR_INSTALL_URL    where herdr's installer comes from (default https://herdr.dev/install.sh)
 #   DOGR_HERDR_CORE_INSTALL_URL   where herdr-core's installer comes from (default https://releases.herdr.dev/core/install.sh)
+#   DOGR_TAILCAT_VERSION      the tailcat release to download on Linux (default 0.7.0); macOS takes what Homebrew has
+#   DOGR_TAILCAT_RELEASE_URL  where those release files are (default https://github.com/tailscale/tailcat/releases/download/v<version>)
 #   DOGR_TTY                  where answers are read from (default /dev/tty); a test points it at a file
 #   DOGR_TRIES, DOGR_POLL_DELAY   how often and how far apart to check that Collie answers (default 20 and 1 second)
 
@@ -48,6 +53,18 @@ main() {
     # the address the phone will use, and the host part the Host header carries, for the proxy and local network routes
     PUBLIC_URL=
     PUBLIC_HOST=
+    # tailcat: the relay map address (--derpmap-url), the relay region asked for (--region), the release to download, the name
+    # of the saved key, the first part of the link the phone is given, the address of the service (read from its log), the
+    # log, and the tailcat program
+    DERP_URL=
+    TC_REGION=
+    TC_VERSION=${DOGR_TAILCAT_VERSION:-0.7.0}
+    TC_RELEASE_URL=${DOGR_TAILCAT_RELEASE_URL:-https://github.com/tailscale/tailcat/releases/download/v$TC_VERSION}
+    TC_KEY=herdogr
+    TC_BASE=
+    TC_ADDRESS=
+    TC_LOG=$HOME/.local/state/dogr/tailcat.log
+    TC_BIN=
     # the port Collie listens on (COLLIE_PORT of the .env, else Collie's default)
     PORT=8787
     # the settings this route needs in Collie's .env, as KEY=VALUE words separated by spaces (no value has a space in it)
@@ -95,13 +112,20 @@ main() {
 
     usage() {
         cat <<'EOF'
-Usage: setup.sh [--tailscale | --proxy --url URL | --lan [--host ADDRESS]] [--mux herdr|herdr-core] [--http]
-                [--yes] [--dry-run] [--help]
+Usage: setup.sh [--tailscale | --tailcat [--derpmap-url URL] [--region NAME] | --proxy --url URL | --lan [--host ADDRESS]]
+                [--mux herdr|herdr-core] [--http] [--yes] [--dry-run] [--help]
 
 Puts Collie on this computer, sets it up for the way your phone reaches it, and shows a QR code that pairs your phone.
-Without --tailscale, --proxy or --lan the script asks which way you use.
+Without --tailscale, --tailcat, --proxy or --lan the script asks which way you use.
 
   --tailscale   Your phone reaches this computer through Tailscale: Collie is published on your tailnet.
+  --tailcat     Your phone reaches this computer through tailcat: an end-to-end encrypted tunnel with no account and no
+                server of yours. The script installs tailcat, makes a saved key (its address then stays the same), runs
+                'tailcat serve' as a background service of your own user, and puts the secret tailcat address into the QR code.
+  --derpmap-url URL  tailcat: the https address of your own relay map instead of tailcat's default one. The phone needs the
+                same address. Implies --tailcat.
+  --region NAME  tailcat: the relay region for a new key (a name from 'tailcat genkey --region=list', or your own relay's
+                host name). Without it the nearest one is picked once. Implies --tailcat.
   --proxy       Your phone reaches this computer through your own domain, with a reverse proxy you run in front of Collie.
                 Needs --url (or the script asks for it). The script sets Collie up behind the proxy; it does not set up
                 the proxy, its certificate or who may reach it.
@@ -128,7 +152,7 @@ EOF
     set_route() {
         if [ -n "$ROUTE" ] && [ "$ROUTE" != "$1" ]; then
             usage >&2
-            die 1 "choose one way for the phone to reach this computer: --tailscale, --proxy or --lan (one way at a time)."
+            die 1 "choose one way for the phone to reach this computer: --tailscale, --tailcat, --proxy or --lan (one way at a time)."
         fi
         ROUTE=$1
     }
@@ -332,7 +356,10 @@ EOF
             value=${pair#*=}
             [ "$(env_get "$key")" = "$value" ] && continue
             env_set "$key" "$value" || die 3 "could not write $ENV_FILE"
-            say "  $ENV_FILE: $key=$value"
+            # The tailcat address is a secret, so the line is shown without it.
+            shown=$value
+            if [ "$ROUTE" = tailcat ] && [ "$key" = COLLIE_PUBLIC_URL ]; then shown="$TC_BASE/<your tailcat address>"; fi
+            say "  $ENV_FILE: $key=$shown"
         done
     }
 
@@ -349,16 +376,18 @@ EOF
     ask_other_route() {
         {
             printf '%s\n' "How does your phone reach this computer, then?"
-            printf '%s\n' "  1) through your own domain, with a reverse proxy you run in front of Collie (HTTPS)"
-            printf '%s\n' "  2) over the local network, with plain http and no encryption"
-            printf '%s' "Enter 1 or 2: "
+            printf '%s\n' "  1) through tailcat: an encrypted tunnel with no account, no server and no open port"
+            printf '%s\n' "  2) through your own domain, with a reverse proxy you run in front of Collie (HTTPS)"
+            printf '%s\n' "  3) over the local network, with plain http and no encryption"
+            printf '%s' "Enter 1, 2 or 3: "
         } >&2
         answer=
-        IFS= read -r answer <&3 || die 1 "no answer. Run again with --proxy or --lan."
+        IFS= read -r answer <&3 || die 1 "no answer. Run again with --tailcat, --proxy or --lan."
         case $answer in
-            1 | proxy) ROUTE=proxy ;;
-            2 | lan) ROUTE=lan ;;
-            *) die 1 "'$answer' is not 1 or 2. Run again with --proxy or --lan." ;;
+            1 | tailcat) ROUTE=tailcat ;;
+            2 | proxy) ROUTE=proxy ;;
+            3 | lan) ROUTE=lan ;;
+            *) die 1 "'$answer' is not 1, 2 or 3. Run again with --tailcat, --proxy or --lan." ;;
         esac
     }
 
@@ -485,6 +514,219 @@ EOF
         want COLLIE_PUBLIC_URL "$PUBLIC_URL"
     }
 
+    # find_tailcat: true when tailcat is installed; puts ~/.local/bin on PATH when only that folder has it. There is no search
+    # of other folders: Homebrew's folder is on PATH for whoever has Homebrew.
+    find_tailcat() {
+        if command -v tailcat >/dev/null 2>&1; then return 0; fi
+        if [ -x "$HOME/.local/bin/tailcat" ]; then
+            PATH="$HOME/.local/bin:$PATH"
+            export PATH
+            return 0
+        fi
+        return 1
+    }
+
+    # tailcat_has_key: true when the saved key named $TC_KEY exists (needs tailcat)
+    tailcat_has_key() {
+        tailcat genkey --list 2>/dev/null </dev/null | grep -qx "$TC_KEY"
+    }
+
+    # resolve_tailcat: check --derpmap-url, and the settings this route needs. COLLIE_PUBLIC_URL has to carry the tailcat address,
+    # which only exists once the service runs, so that one line is added later (setup_tailcat).
+    resolve_tailcat() {
+        if [ -n "$DERP_URL" ]; then
+            case $DERP_URL in
+                https://*) ;;
+                *) die 1 "the relay map address must start with https://: $DERP_URL" ;;
+            esac
+            case ${DERP_URL#https://} in
+                '' | [!A-Za-z0-9]*) die 1 "that is not a relay map address (it needs a host name): $DERP_URL" ;;
+                *@*) die 1 "the relay map address must not have a user name in it: $DERP_URL" ;;
+                *[!A-Za-z0-9._~:/?=\&#+,-]*) die 1 "the relay map address has characters this script does not pass on to a service file: $DERP_URL" ;;
+            esac
+        fi
+        # The phone's own Host header names its end of the tunnel, 127.0.0.1 with a port of its own, whatever the port here is.
+        TC_BASE=http://tailcat.invalid
+        if [ "$PORT" != 8787 ]; then TC_BASE=$TC_BASE:$PORT; fi
+        want COLLIE_SKIP_SERVE 1
+        want COLLIE_PUBLIC_HOSTS "127.0.0.1:$PORT"
+        case $(env_get COLLIE_HOST) in
+            '' | 127.0.0.1 | localhost | ::1) ;;
+            *) want COLLIE_HOST 127.0.0.1 ;;
+        esac
+    }
+
+    # tailcat_arch: the processor name the release files use, in TC_ARCH. Stops (exit 5) when there is no release for this one,
+    # which the plan already says, before anything is changed.
+    tailcat_arch() {
+        case $(uname -m) in
+            x86_64 | amd64) TC_ARCH=amd64 ;;
+            aarch64 | arm64) TC_ARCH=arm64 ;;
+            armv7l | armv7) TC_ARCH=armv7 ;;
+            *) die 5 "there is no tailcat release for this processor ($(uname -m))." ;;
+        esac
+    }
+
+    # plan_tailcat: the plan lines for installing tailcat, the key and the service
+    plan_tailcat() {
+        if find_tailcat; then
+            plan "tailcat is already installed ($(tailcat version 2>/dev/null </dev/null | head -n 1)); it is left as it is."
+        elif [ "$(uname -s)" = Darwin ]; then
+            plan "Install tailcat with Homebrew ('brew install tailcat'). Homebrew is the only way on a Mac: the releases have no Mac file."
+        else
+            tailcat_arch
+            plan "Install tailcat $TC_VERSION: download $TC_RELEASE_URL/tailcat_${TC_VERSION}_linux_$TC_ARCH.tar.gz, check it against the release's checksums.txt, and put the program into ~/.local/bin."
+        fi
+        if find_tailcat && tailcat_has_key; then
+            plan "Use the saved tailcat key named '$TC_KEY': its address is the same as last time."
+        else
+            plan "Make a saved tailcat key named '$TC_KEY' (it is kept, so the tailcat address stays the same after a restart)."
+        fi
+        if [ "$(uname -s)" = Darwin ]; then
+            plan "Run 'tailcat serve' for port $PORT as a background service of your own user (launchd: ~/Library/LaunchAgents/dev.dogr.tailcat.plist, log ~/.local/state/dogr/tailcat.log). It starts again at every login."
+        else
+            plan "Run 'tailcat serve' for port $PORT as a background service of your own user (systemd --user: ~/.config/systemd/user/dogr-tailcat.service, log ~/.local/state/dogr/tailcat.log)."
+        fi
+    }
+
+    # install_tailcat: put tailcat on this computer. macOS: Homebrew. Linux: the release file, checked against the release's checksum file.
+    install_tailcat() {
+        say ""
+        say "==> Installing tailcat"
+        if [ "$(uname -s)" = Darwin ]; then
+            command -v brew >/dev/null 2>&1 || die 5 "tailcat has no download for macOS, and Homebrew was not found. Install Homebrew (https://brew.sh) and run this command again, or install tailcat yourself and run it again."
+            brew install tailcat </dev/null || die 5 "'brew install tailcat' failed. Its output is above."
+        else
+            tailcat_arch
+            tc_file=tailcat_${TC_VERSION}_linux_$TC_ARCH.tar.gz
+            curl -fsSL "$TC_RELEASE_URL/$tc_file" -o "$WORK/$tc_file" || die 5 "could not download $TC_RELEASE_URL/$tc_file"
+            curl -fsSL "$TC_RELEASE_URL/checksums.txt" -o "$WORK/checksums.txt" || die 5 "could not download $TC_RELEASE_URL/checksums.txt"
+            tc_want=$(awk -v f="$tc_file" '$2 == f { print $1 }' "$WORK/checksums.txt" | head -n 1)
+            [ -n "$tc_want" ] || die 5 "the checksum file does not list $tc_file, so the download cannot be checked."
+            if command -v sha256sum >/dev/null 2>&1; then
+                tc_got=$(sha256sum "$WORK/$tc_file" | awk '{ print $1 }')
+            elif command -v shasum >/dev/null 2>&1; then
+                tc_got=$(shasum -a 256 "$WORK/$tc_file" | awk '{ print $1 }')
+            else
+                die 5 "neither sha256sum nor shasum was found, so the download cannot be checked."
+            fi
+            [ "$tc_got" = "$tc_want" ] || die 5 "the checksum of $tc_file does not match the release's checksums.txt. Nothing was installed."
+            mkdir -p "$WORK/tailcat-files" "$HOME/.local/bin" || die 5 "could not make $HOME/.local/bin"
+            tar -xzf "$WORK/$tc_file" -C "$WORK/tailcat-files" tailcat || die 5 "could not unpack $tc_file"
+            cp "$WORK/tailcat-files/tailcat" "$HOME/.local/bin/tailcat" || die 5 "could not copy tailcat into $HOME/.local/bin"
+            chmod +x "$HOME/.local/bin/tailcat"
+        fi
+        find_tailcat || die 5 "tailcat was installed but its command was not found. Add ~/.local/bin to your PATH and run this command again."
+        say "  $(tailcat version 2>/dev/null </dev/null | head -n 1)"
+    }
+
+    # make_tailcat_key: make the saved key unless it is there. The region is baked into the key, and so into the address, which
+    # keeps the address the same. Picking the nearest region sometimes fails, so it is tried three times.
+    make_tailcat_key() {
+        if tailcat_has_key; then
+            say "  using the saved key '$TC_KEY'"
+            if [ -n "$TC_REGION" ] || [ -n "$DERP_URL" ]; then
+                say "  The key exists already, so its relay region is kept. To change it: tailcat genkey --delete --key=$TC_KEY, then run this again."
+            fi
+            return 0
+        fi
+        set -- genkey "--key=$TC_KEY"
+        if [ -n "$DERP_URL" ]; then set -- "$@" "--derpmap-url=$DERP_URL"; fi
+        if [ -n "$TC_REGION" ]; then
+            set -- "$@" "--region=$TC_REGION"
+            tailcat "$@" </dev/null >/dev/null 2>"$WORK/genkey.err" || {
+                cat "$WORK/genkey.err" >&2
+                die 4 "could not make the tailcat key. See 'tailcat genkey --region=list' for names that work with --region."
+            }
+        else
+            set -- "$@" --fixed-region
+            tc_try=0
+            while :; do
+                tc_try=$((tc_try + 1))
+                if tailcat "$@" </dev/null >/dev/null 2>"$WORK/genkey.err"; then break; fi
+                if [ "$tc_try" -ge 3 ]; then
+                    cat "$WORK/genkey.err" >&2
+                    die 4 "could not pick a relay region for the tailcat key. Run this command again with --region NAME (see 'tailcat genkey --region=list')."
+                fi
+                sleep "$DELAY"
+            done
+        fi
+        say "  made the saved key '$TC_KEY'"
+    }
+
+    # read_tailcat_address: the address of the running service, from the last "tc..." word its log prints. The character before it
+    # must not be an address character, or the match could start in the middle of the address.
+    # shellcheck disable=SC2329  # called through retry
+    read_tailcat_address() {
+        TC_ADDRESS=$(sed -n 's/.*[^A-Za-z0-9_-]\(tc[A-Za-z0-9_-]\{100,\}\).*/\1/p' "$TC_LOG" 2>/dev/null | tail -n 1)
+        [ -n "$TC_ADDRESS" ]
+    }
+
+    # start_tailcat_service: write the service file for this system and (re)start the service with a fresh log, so an address
+    # from an earlier run is never taken for the new one.
+    start_tailcat_service() {
+        TC_BIN=$(command -v tailcat)
+        (
+            umask 077
+            mkdir -p "${TC_LOG%/*}" && : >"$TC_LOG"
+        ) || die 4 "could not make the log ($TC_LOG)."
+        if [ "$(uname -s)" = Darwin ]; then
+            tc_plist=$HOME/Library/LaunchAgents/dev.dogr.tailcat.plist
+            mkdir -p "${tc_plist%/*}" || die 4 "could not make ${tc_plist%/*}"
+            # The values go into XML, so & and < are written the XML way.
+            tc_xml_log=$(printf '%s' "$TC_LOG" | sed 's/&/\&amp;/g; s/</\&lt;/g')
+            tc_xml_bin=$(printf '%s' "$TC_BIN" | sed 's/&/\&amp;/g; s/</\&lt;/g')
+            {
+                printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>'
+                printf '%s\n' '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+                printf '%s\n' '<plist version="1.0">' '<dict>'
+                printf '%s\n' '  <key>Label</key><string>dev.dogr.tailcat</string>' '  <key>ProgramArguments</key>' '  <array>'
+                printf '    <string>%s</string>\n' "$tc_xml_bin" serve "--key=$TC_KEY"
+                if [ -n "$DERP_URL" ]; then printf '    <string>%s</string>\n' "--derpmap-url=$(printf '%s' "$DERP_URL" | sed 's/&/\&amp;/g')"; fi
+                printf '    <string>%s</string>\n' "$PORT"
+                printf '%s\n' '  </array>' '  <key>RunAtLoad</key><true/>' '  <key>KeepAlive</key><true/>'
+                printf '  <key>StandardErrorPath</key><string>%s</string>\n' "$tc_xml_log"
+                printf '  <key>StandardOutPath</key><string>%s</string>\n' "$tc_xml_log"
+                printf '%s\n' '  <key>ProcessType</key><string>Background</string>' '</dict>' '</plist>'
+            } >"$tc_plist" || die 4 "could not write $tc_plist"
+            tc_uid=$(id -u)
+            # An older run's service is stopped first so the new file is the one that counts. That fails when none runs, which is fine.
+            launchctl bootout "gui/$tc_uid/dev.dogr.tailcat" >/dev/null 2>&1 </dev/null || :
+            retry launchctl bootstrap "gui/$tc_uid" "$tc_plist" </dev/null || die 4 "'launchctl bootstrap' could not start the tailcat service ($tc_plist). Is this a login session of your own user?"
+        else
+            tc_unit=$HOME/.config/systemd/user/dogr-tailcat.service
+            mkdir -p "${tc_unit%/*}" || die 4 "could not make ${tc_unit%/*}"
+            {
+                printf '%s\n' '[Unit]' 'Description=tailcat tunnel for Collie (dogr setup.sh)' '' '[Service]'
+                tc_exec="\"$TC_BIN\" serve --key=$TC_KEY"
+                if [ -n "$DERP_URL" ]; then tc_exec="$tc_exec --derpmap-url=$DERP_URL"; fi
+                printf 'ExecStart=%s %s\n' "$tc_exec" "$PORT"
+                printf '%s\n' 'Restart=always' 'RestartSec=5'
+                printf 'StandardError=append:%s\n' "$TC_LOG"
+                printf 'StandardOutput=append:%s\n' "$TC_LOG"
+                printf '%s\n' '' '[Install]' 'WantedBy=default.target'
+            } >"$tc_unit" || die 4 "could not write $tc_unit"
+            systemctl --user daemon-reload </dev/null || die 4 "'systemctl --user daemon-reload' failed. Is there a systemd user session (are you logged in on this computer)?"
+            systemctl --user enable dogr-tailcat.service </dev/null || die 4 "'systemctl --user enable' failed for the tailcat service ($tc_unit)."
+            systemctl --user restart dogr-tailcat.service </dev/null || die 4 "'systemctl --user restart' could not start the tailcat service ($tc_unit). 'journalctl --user -u dogr-tailcat' says why."
+        fi
+    }
+
+    # setup_tailcat: install tailcat, make the key, run the service, read the address it prints, and add COLLIE_PUBLIC_URL with
+    # it to the settings that apply_settings writes next.
+    setup_tailcat() {
+        if ! find_tailcat; then install_tailcat; fi
+        say ""
+        say "==> Making sure the tailcat key and service are there"
+        make_tailcat_key
+        start_tailcat_service
+        retry read_tailcat_address || die 4 "the tailcat service runs but printed no address. $TC_LOG should have a line with it; 'tailcat' errors end up there."
+        say "  the service runs; its address is secret and is not shown here (it is in the QR code below)"
+        PUBLIC_URL=$TC_BASE/$TC_ADDRESS
+        want COLLIE_PUBLIC_URL "$PUBLIC_URL"
+        if [ "$(env_get COLLIE_PUBLIC_URL)" != "$PUBLIC_URL" ]; then ENV_TOUCHED=1; fi
+    }
+
     # plan TEXT...: one numbered line of the plan
     plan() {
         PLAN_N=$((PLAN_N + 1))
@@ -541,6 +783,33 @@ EOF
     while [ $# -gt 0 ]; do
         case $1 in
             --tailscale) set_route tailscale ;;
+            --tailcat) set_route tailcat ;;
+            --derpmap-url)
+                if [ $# -lt 2 ]; then
+                    usage >&2
+                    die 1 "--derpmap-url needs a value: the https address of your relay map"
+                fi
+                set_route tailcat
+                DERP_URL=$2
+                shift
+                ;;
+            --derpmap-url=*)
+                set_route tailcat
+                DERP_URL=${1#--derpmap-url=}
+                ;;
+            --region)
+                if [ $# -lt 2 ]; then
+                    usage >&2
+                    die 1 "--region needs a value: a relay region (see tailcat genkey --region=list) or the host name of your own relay"
+                fi
+                set_route tailcat
+                TC_REGION=$2
+                shift
+                ;;
+            --region=*)
+                set_route tailcat
+                TC_REGION=${1#--region=}
+                ;;
             --proxy) set_route proxy ;;
             --lan) set_route lan ;;
             --url)
@@ -615,7 +884,7 @@ EOF
 
     # The first question: which way does the phone reach this computer? Tailscale first; "no" leads to the other two.
     if [ -z "$ROUTE" ]; then
-        have_tty || die 1 "there is no terminal to ask on. Run again with --tailscale, --proxy or --lan (and --yes) to answer for you."
+        have_tty || die 1 "there is no terminal to ask on. Run again with --tailscale, --tailcat, --proxy or --lan (and --yes) to answer for you."
         if ask_yes_no "Do you reach this computer from your phone through Tailscale?"; then
             ROUTE=tailscale
         else
@@ -630,6 +899,7 @@ EOF
     esac
     case $ROUTE in
         tailscale) check_leftovers ;;
+        tailcat) resolve_tailcat ;;
         proxy) resolve_proxy ;;
         lan) resolve_lan ;;
     esac
@@ -676,11 +946,16 @@ EOF
     if [ "$ENV_CHANGED" = 1 ]; then
         plan "Change COLLIE_MUX in $ENV_FILE from $ENV_MUX to $MUX (Collie reads that file before your environment), then restart Collie."
     fi
+    if [ "$ROUTE" = tailcat ]; then plan_tailcat; fi
     if [ "$ROUTE" != tailscale ]; then plan_settings; fi
     case $ROUTE in
         tailscale)
             plan "Start Collie in the background (launchd on macOS, systemd --user on Linux), driving $MUX."
             plan "Publish it on your tailnet with 'tailscale serve' (HTTPS, port 443 -> 127.0.0.1:8787)."
+            ;;
+        tailcat)
+            plan "Also set COLLIE_PUBLIC_URL to $TC_BASE/<your tailcat address> once the service has printed the address (that is what the QR code carries)."
+            plan "Start Collie in the background (launchd on macOS, systemd --user on Linux), driving $MUX. It answers on 127.0.0.1 only; the tunnel carries the phone to it."
             ;;
         proxy)
             plan "Start Collie in the background (launchd on macOS, systemd --user on Linux), driving $MUX. It answers on 127.0.0.1 only; your reverse proxy is what the phone reaches."
@@ -692,6 +967,13 @@ EOF
             ;;
     esac
     plan "Create a one-time pairing code and show it as a QR code."
+    if [ "$ROUTE" = tailcat ]; then
+        say ""
+        say "Please note: the tailcat address is a secret. Whoever has it can reach Collie's door. Pairing still needs the one-time"
+        say "code, and every other request needs the key that pairing hands out. The address ends up in the QR code, in Collie's"
+        say "settings file ($ENV_FILE, private to you) and in the output of 'collie status'. Do not share a screenshot of any of them."
+        say ""
+    fi
     if [ "$ROUTE" = lan ]; then
         say ""
         say "Please note: this is plain http, so the traffic is not encrypted. Anyone on your local network can reach Collie."
@@ -768,6 +1050,7 @@ EOF
     fi
     COLLIE_MUX=$MUX
     export COLLIE_MUX
+    if [ "$ROUTE" = tailcat ]; then setup_tailcat; fi
     if [ "$ROUTE" != tailscale ]; then apply_settings; fi
 
     # Step 3: start Collie. It prints lines starting with "setup:" for what is missing; it never stops on them itself.
@@ -841,7 +1124,7 @@ EOF
                 warn "$phone_url did not answer from this computer. If your phone cannot connect either, run 'collie doctor'."
             fi
             ;;
-        proxy | lan)
+        proxy | lan | tailcat)
             # Collie must give the address that was asked for: if it does not, it did not read the settings.
             if [ "$phone_url" != "$PUBLIC_URL" ]; then
                 say ""
@@ -875,6 +1158,9 @@ EOF
                     say "but your phone can, run it now."
                     exit 3
                 fi
+            elif [ "$ROUTE" = tailcat ]; then
+                # The tunnel ends at the phone, so there is no address here to ask. The service log is the evidence.
+                say "  through tailcat: the service runs and Collie gives the address it printed (log: $TC_LOG)"
             else
                 say "  on the local network: $phone_url answers"
             fi
@@ -896,6 +1182,14 @@ EOF
     say "The code works once and for ${minutes:-a few} minutes. For a new one, run: collie pair"
     if [ "$SWITCHED" = 1 ]; then
         say "The address starts with http://. Tailscale encrypts the traffic between your devices; the address is just not HTTPS."
+    fi
+    if [ "$ROUTE" = tailcat ]; then
+        say "The first connection can take several seconds while the tunnel is built. The tailcat service keeps running and"
+        say "starts again after a restart; the address stays the same as long as the key '$TC_KEY' exists. If a pairing code"
+        say "runs out, run: collie pair"
+        if [ "$(uname -s)" != Darwin ]; then
+            say "To keep the service running when you are logged out (a server), run once: loginctl enable-linger \$USER"
+        fi
     fi
     if [ "$ROUTE" = lan ]; then
         say "The address starts with http:// and is not encrypted. Your phone must be on the same network as this computer."
