@@ -1,7 +1,7 @@
 #!/bin/sh
 # dogr setup.sh - put Collie on this computer and pair your phone with it.
 #
-# Four ways for the phone to reach this computer (--tailscale, --tailcat, --proxy, --lan; without one the script asks). It calls the
+# Five ways for the phone to reach this computer (--tailscale, --tailcat, --iroh, --proxy, --lan; without one the script asks). It calls the
 # commands of the programs it sets up and checks the result:
 #   1. install Collie, only if it is not installed yet (Collie's own installer);
 #   2. make sure the terminal program Collie drives is there and running: herdr or herdr-core (--mux picks one). A missing
@@ -9,14 +9,15 @@
 #   3. `collie start`: runs Collie in the background. Over Tailscale it also publishes Collie on your tailnet; behind your
 #      own reverse proxy (--proxy --url https://...), on the local network (--lan) or through tailcat (--tailcat) Collie
 #      publishes nothing itself. For tailcat this script first installs tailcat, makes a saved key (so the address stays
-#      the same) and runs `tailcat serve` as a background service of your own user (launchd or systemd --user);
+#      the same) and runs `tailcat serve` as a background service of your own user (launchd or systemd --user). Through iroh
+#      (--iroh) it is the same idea with dumbpipe: a saved secret key and a secret name, and `dumbpipe listen-tcp` as the service;
 #   4. check that Collie answers where the phone will look for it, and drives the program you picked;
 #   5. `collie pair`, last of all, so the one-time code has all of its ten minutes left.
 # Lines of Collie's own .env may change, each only in the way the plan says before you agree: COLLIE_MUX, when it names the
 # other terminal program than the one you picked; on a tailnet without HTTPS certificates (Headscale, for one)
 # COLLIE_SERVE_MODE=http (with your agreement or --http); and for --proxy and --lan the settings that route needs
 # (COLLIE_SKIP_SERVE, COLLIE_PUBLIC_URL and friends). A line that is there is replaced where it stands, a missing one is added.
-# The tailcat route also writes a service file and a log (see the README for where, and how to undo it).
+# The tailcat and iroh routes also write a service file and a log (see the README for where, and how to undo it).
 #
 # Run it:        curl -fsSL https://raw.githubusercontent.com/mithyer/dogr/main/setup.sh | sh
 # Options go after `-s --`:   ... | sh -s -- --tailscale --yes
@@ -33,6 +34,8 @@
 #   DOGR_HERDR_CORE_INSTALL_URL   where herdr-core's installer comes from (default https://releases.herdr.dev/core/install.sh)
 #   DOGR_TAILCAT_VERSION      the tailcat release to download on Linux (default 0.7.0); macOS takes what Homebrew has
 #   DOGR_TAILCAT_RELEASE_URL  where those release files are (default https://github.com/tailscale/tailcat/releases/download/v<version>)
+#   DOGR_DUMBPIPE_RELEASE_URL where dumbpipe's release files are (default https://github.com/n0-computer/dumbpipe/releases/download/v<version>)
+#   DOGR_DUMBPIPE_SHA256      the SHA-256 the dumbpipe file must have, for a mirror whose file is not the pinned release's
 #   DOGR_PROGRESS             always | never | auto (default): draw "12.3 / 45.6 MB" while the installers download (auto = on a terminal only)
 #   DOGR_TTY                  where answers are read from (default /dev/tty); a test points it at a file
 #   DOGR_TRIES, DOGR_POLL_DELAY   how often and how far apart to check that Collie answers (default 20 and 1 second)
@@ -46,7 +49,7 @@ main() {
     TTY=${DOGR_TTY:-/dev/tty}
     TRIES=${DOGR_TRIES:-20}
     DELAY=${DOGR_POLL_DELAY:-1}
-    # how the phone reaches this computer: tailscale, proxy or lan; empty until an option or the questions say
+    # how the phone reaches this computer: tailscale, tailcat, iroh, proxy or lan; empty until an option or the questions say
     ROUTE=
     # the https:// address of the reverse proxy (--url), and the address of this computer on the local network (--host)
     PROXY_URL=
@@ -66,6 +69,20 @@ main() {
     TC_ADDRESS=
     TC_LOG=$HOME/.local/state/dogr/tailcat.log
     TC_BIN=
+    # iroh: the dumbpipe release this script installs (pinned, with its checksums in iroh_release), where its files are, the
+    # file and checksum for this computer, the first part of the link the phone is given, the folder of the saved secrets, the
+    # endpoint id and the secret name (ALPN) that make up the address, the service log and the dumbpipe program
+    IR_VERSION=0.40.1
+    IR_RELEASE_URL=${DOGR_DUMBPIPE_RELEASE_URL:-https://github.com/n0-computer/dumbpipe/releases/download/v$IR_VERSION}
+    IR_FILE=
+    IR_SUM=
+    IR_BASE=
+    IR_DIR=$HOME/.config/dogr/iroh
+    IR_ENDPOINT=
+    IR_ALPN=
+    IR_TICKET=
+    IR_LOG=$HOME/.local/state/dogr/iroh.log
+    IR_BIN=
     # the port Collie listens on (COLLIE_PORT of the .env, else Collie's default)
     PORT=8787
     # the settings this route needs in Collie's .env, as KEY=VALUE words separated by spaces (no value has a space in it)
@@ -231,11 +248,11 @@ WRAPPER
 
     usage() {
         cat <<'EOF'
-Usage: setup.sh [--tailscale | --tailcat [--derpmap-url URL] [--region NAME] | --proxy --url URL | --lan [--host ADDRESS]]
+Usage: setup.sh [--tailscale | --tailcat [--derpmap-url URL] [--region NAME] | --iroh | --proxy --url URL | --lan [--host ADDRESS]]
                 [--mux herdr|herdr-core] [--http] [--yes] [--dry-run] [--help]
 
 Puts Collie on this computer, sets it up for the way your phone reaches it, and shows a QR code that pairs your phone.
-Without --tailscale, --tailcat, --proxy or --lan the script asks which way you use.
+Without --tailscale, --tailcat, --iroh, --proxy or --lan the script asks which way you use.
 
   --tailscale   Your phone reaches this computer through Tailscale: Collie is published on your tailnet.
   --tailcat     Your phone reaches this computer through tailcat: an end-to-end encrypted tunnel with no account and no
@@ -245,6 +262,11 @@ Without --tailscale, --tailcat, --proxy or --lan the script asks which way you u
                 same address. Implies --tailcat.
   --region NAME  tailcat: the relay region for a new key (a name from 'tailcat genkey --region=list', or your own relay's
                 host name). Without it the nearest one is picked once. Implies --tailcat.
+  --iroh        Your phone reaches this computer through iroh: an end-to-end encrypted tunnel with no account and no server
+                of yours, over n0's public relay servers (free, meant for development and testing, no promise of uptime) until
+                the two find a direct path. The script installs dumbpipe, makes a saved secret key and a secret name (so the
+                address then stays the same), runs 'dumbpipe listen-tcp' as a background service of your own user, and puts
+                the secret iroh address into the QR code.
   --proxy       Your phone reaches this computer through your own domain, with a reverse proxy you run in front of Collie.
                 Needs --url (or the script asks for it). The script sets Collie up behind the proxy; it does not set up
                 the proxy, its certificate or who may reach it.
@@ -271,7 +293,7 @@ EOF
     set_route() {
         if [ -n "$ROUTE" ] && [ "$ROUTE" != "$1" ]; then
             usage >&2
-            die 1 "choose one way for the phone to reach this computer: --tailscale, --tailcat, --proxy or --lan (one way at a time)."
+            die 1 "choose one way for the phone to reach this computer: --tailscale, --tailcat, --iroh, --proxy or --lan (one way at a time)."
         fi
         ROUTE=$1
     }
@@ -475,9 +497,10 @@ EOF
             value=${pair#*=}
             [ "$(env_get "$key")" = "$value" ] && continue
             env_set "$key" "$value" || die 3 "could not write $ENV_FILE"
-            # The tailcat address is a secret, so the line is shown without it.
+            # The tailcat and iroh addresses are secrets, so the line is shown without them.
             shown=$value
             if [ "$ROUTE" = tailcat ] && [ "$key" = COLLIE_PUBLIC_URL ]; then shown="$TC_BASE/<your tailcat address>"; fi
+            if [ "$ROUTE" = iroh ] && [ "$key" = COLLIE_PUBLIC_URL ]; then shown="$IR_BASE/<your iroh address>"; fi
             say "  $ENV_FILE: $key=$shown"
         done
     }
@@ -491,22 +514,24 @@ EOF
         ANSWER=$(printf '%s' "$ANSWER" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
     }
 
-    # ask_other_route: the answer to the first question was "no": ask which of the other two ways it is.
+    # ask_other_route: the answer to the first question was "no": ask which of the other ways it is.
     ask_other_route() {
         {
             printf '%s\n' "How does your phone reach this computer, then?"
             printf '%s\n' "  1) through tailcat: an encrypted tunnel with no account, no server and no open port"
             printf '%s\n' "  2) through your own domain, with a reverse proxy you run in front of Collie (HTTPS)"
             printf '%s\n' "  3) over the local network, with plain http and no encryption"
-            printf '%s' "Enter 1, 2 or 3: "
+            printf '%s\n' "  4) through iroh: also an encrypted tunnel with no account, no server and no open port (n0's free public relays)"
+            printf '%s' "Enter 1, 2, 3 or 4: "
         } >&2
         answer=
-        IFS= read -r answer <&3 || die 1 "no answer. Run again with --tailcat, --proxy or --lan."
+        IFS= read -r answer <&3 || die 1 "no answer. Run again with --tailcat, --iroh, --proxy or --lan."
         case $answer in
             1 | tailcat) ROUTE=tailcat ;;
             2 | proxy) ROUTE=proxy ;;
             3 | lan) ROUTE=lan ;;
-            *) die 1 "'$answer' is not 1, 2 or 3. Run again with --tailcat, --proxy or --lan." ;;
+            4 | iroh) ROUTE=iroh ;;
+            *) die 1 "'$answer' is not 1, 2, 3 or 4. Run again with --tailcat, --iroh, --proxy or --lan." ;;
         esac
     }
 
@@ -722,13 +747,8 @@ EOF
             fetch "$TC_RELEASE_URL/checksums.txt" "$WORK/checksums.txt" || die 5 "could not download $TC_RELEASE_URL/checksums.txt"
             tc_want=$(awk -v f="$tc_file" '$2 == f { print $1 }' "$WORK/checksums.txt" | head -n 1)
             [ -n "$tc_want" ] || die 5 "the checksum file does not list $tc_file, so the download cannot be checked."
-            if command -v sha256sum >/dev/null 2>&1; then
-                tc_got=$(sha256sum "$WORK/$tc_file" | awk '{ print $1 }')
-            elif command -v shasum >/dev/null 2>&1; then
-                tc_got=$(shasum -a 256 "$WORK/$tc_file" | awk '{ print $1 }')
-            else
-                die 5 "neither sha256sum nor shasum was found, so the download cannot be checked."
-            fi
+            tc_got=$(sha256_of "$WORK/$tc_file")
+            [ -n "$tc_got" ] || die 5 "neither sha256sum nor shasum was found, so the download cannot be checked."
             [ "$tc_got" = "$tc_want" ] || die 5 "the checksum of $tc_file does not match the release's checksums.txt. Nothing was installed."
             mkdir -p "$WORK/tailcat-files" "$HOME/.local/bin" || die 5 "could not make $HOME/.local/bin"
             tar -xzf "$WORK/$tc_file" -C "$WORK/tailcat-files" tailcat || die 5 "could not unpack $tc_file"
@@ -846,6 +866,276 @@ EOF
         if [ "$(env_get COLLIE_PUBLIC_URL)" != "$PUBLIC_URL" ]; then ENV_TOUCHED=1; fi
     }
 
+    # sha256_of FILE: the SHA-256 of a file as 64 hex characters; nothing when the computer has neither sha256sum nor shasum
+    sha256_of() {
+        if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$1" | awk '{ print $1 }'
+        elif command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 "$1" | awk '{ print $1 }'
+        fi
+    }
+
+    # sq TEXT: TEXT as one single-quoted shell word, for a line of the runner script that is written to a file
+    sq() {
+        printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+    }
+
+    # random_hex N: N random bytes as 2N hex characters
+    random_hex() {
+        head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'
+    }
+
+    # iroh_id_of TICKET: the endpoint id (64 hex characters) inside a dumbpipe ticket, which is the word "endpoint" and then
+    # base32 letters. The first byte of the decoded ticket is 0 and the next 32 bytes are the id; anything else is a ticket this
+    # does not understand, and nothing is printed. Plain awk, because the computers this runs on may have no base32 tool, and
+    # the openssl of a Mac (LibreSSL) cannot derive the id from the key.
+    iroh_id_of() {
+        printf '%s\n' "$1" | awk '
+            {
+                t = tolower($0)
+                sub(/^endpoint/, "", t)
+                letters = "abcdefghijklmnopqrstuvwxyz234567"
+                bits = ""
+                for (i = 1; i <= 53 && i <= length(t); i++) {
+                    v = index(letters, substr(t, i, 1)) - 1
+                    if (v < 0) exit
+                    for (b = 4; b >= 0; b--) bits = bits (int(v / 2 ^ b) % 2)
+                }
+                if (length(bits) < 264 || substr(bits, 1, 8) != "00000000") exit
+                hex = ""
+                for (k = 9; k < 265; k += 4) {
+                    n = 0
+                    for (j = 0; j < 4; j++) n = n * 2 + substr(bits, k + j, 1)
+                    hex = hex substr("0123456789abcdef", n + 1, 1)
+                }
+                print hex
+            }'
+    }
+
+    # dumbpipe_ok PROGRAM: true when that dumbpipe suits the phone: 0.40.1 or newer (older ones speak an older iroh that the
+    # phone's library cannot talk to) and with --custom-alpn, which the secret name needs
+    dumbpipe_ok() {
+        ir_v=$("$1" --version 2>/dev/null </dev/null | head -n 1 | sed -n 's/^dumbpipe \([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2 \3/p')
+        [ -n "$ir_v" ] || return 1
+        printf '%s\n' "$ir_v" | awk '{ exit !($1 > 0 || $2 > 40 || ($2 == 40 && $3 >= 1)) }' || return 1
+        "$1" listen-tcp --help 2>&1 </dev/null | grep -q -e '--custom-alpn'
+    }
+
+    # find_dumbpipe: true when a usable dumbpipe is installed; its path is then in IR_BIN. One that is too old is passed over,
+    # and the script installs its own into ~/.local/bin and uses that by its full path.
+    find_dumbpipe() {
+        for ir_try in "$(command -v dumbpipe 2>/dev/null)" "$HOME/.local/bin/dumbpipe"; do
+            if [ -n "$ir_try" ] && [ -x "$ir_try" ] && dumbpipe_ok "$ir_try"; then
+                IR_BIN=$ir_try
+                return 0
+            fi
+        done
+        return 1
+    }
+
+    # resolve_iroh: the settings this route needs. COLLIE_PUBLIC_URL has to carry the iroh address, which needs the saved key, so
+    # that one line is added later (setup_iroh). The phone reaches Collie at 127.0.0.1 on a port of its own, like with tailcat.
+    resolve_iroh() {
+        IR_BASE=http://iroh.invalid
+        want COLLIE_SKIP_SERVE 1
+        want COLLIE_PUBLIC_HOSTS "127.0.0.1:$PORT"
+        case $(env_get COLLIE_HOST) in
+            '' | 127.0.0.1 | localhost | ::1) ;;
+            *) want COLLIE_HOST 127.0.0.1 ;;
+        esac
+    }
+
+    # iroh_release: the dumbpipe release file this computer takes (IR_FILE) and the SHA-256 it must have (IR_SUM). The sums are
+    # the digests GitHub shows for the files of release v0.40.1; the release has no checksum file of its own. Stops (exit 5)
+    # when there is no release for this computer, which the plan already says, before anything is changed.
+    iroh_release() {
+        case $(uname -s) in
+            Darwin) ir_os=darwin ;;
+            *) ir_os=linux ;;
+        esac
+        case $(uname -m) in
+            x86_64 | amd64) ir_arch=x86_64 ;;
+            aarch64 | arm64) ir_arch=aarch64 ;;
+            *) die 5 "there is no dumbpipe release for this processor ($(uname -m))." ;;
+        esac
+        IR_FILE=dumbpipe-v$IR_VERSION-$ir_os-$ir_arch.tar.gz
+        case $ir_os-$ir_arch in
+            darwin-aarch64) IR_SUM=e6bd3c9a98ba22e8233ae1f8ba5e2dceb4cbf132dc4d4332589295b702902a27 ;;
+            darwin-x86_64) IR_SUM=eaa35e228528cbf5fc2a8a07646570f49af6ab1acd35c8f539f150a0cb5d4b0e ;;
+            linux-aarch64) IR_SUM=1529c49598ac15d9413bf7f29a09c04cf2f5dc3af1b9080a1b50855a77846c47 ;;
+            linux-x86_64) IR_SUM=66aee1e249890ee63678dfc8f18ce3671e691673c83bbd72bf9a54c4d32da85c ;;
+        esac
+        if [ -n "${DOGR_DUMBPIPE_SHA256:-}" ]; then IR_SUM=$DOGR_DUMBPIPE_SHA256; fi
+    }
+
+    # iroh_keys_saved: true when the saved secret key and the secret name are both there and well formed
+    iroh_keys_saved() {
+        grep -qx '[0-9a-f]\{64\}' "$IR_DIR/secret" 2>/dev/null && grep -qx '[0-9a-f]\{32\}' "$IR_DIR/alpn" 2>/dev/null
+    }
+
+    # plan_iroh: the plan lines for installing dumbpipe, the saved keys and the service
+    plan_iroh() {
+        if find_dumbpipe; then
+            plan "dumbpipe is already installed ($("$IR_BIN" --version 2>/dev/null </dev/null | head -n 1)); it is left as it is."
+        else
+            iroh_release
+            plan "Install dumbpipe $IR_VERSION: download $IR_RELEASE_URL/$IR_FILE, check it against the SHA-256 this script carries, and put the program into ~/.local/bin."
+        fi
+        if iroh_keys_saved; then
+            plan "Use the secret key and the secret name saved in ~/.config/dogr/iroh: the iroh address is the same as last time."
+        else
+            plan "Make a secret key and a secret name in ~/.config/dogr/iroh (private to you; they are kept, so the iroh address stays the same after a restart)."
+        fi
+        if [ "$(uname -s)" = Darwin ]; then
+            plan "Run 'dumbpipe listen-tcp' for port $PORT as a background service of your own user (launchd: ~/Library/LaunchAgents/dev.dogr.iroh.plist, log ~/.local/state/dogr/iroh.log). It starts again at every login."
+        else
+            plan "Run 'dumbpipe listen-tcp' for port $PORT as a background service of your own user (systemd --user: ~/.config/systemd/user/dogr-iroh.service, log ~/.local/state/dogr/iroh.log)."
+        fi
+    }
+
+    # install_dumbpipe: download the pinned release, check its SHA-256, and put the program into ~/.local/bin
+    install_dumbpipe() {
+        say ""
+        say "==> Installing dumbpipe"
+        iroh_release
+        fetch "$IR_RELEASE_URL/$IR_FILE" "$WORK/$IR_FILE" || die 5 "could not download $IR_RELEASE_URL/$IR_FILE"
+        ir_got=$(sha256_of "$WORK/$IR_FILE")
+        [ -n "$ir_got" ] || die 5 "neither sha256sum nor shasum was found, so the download cannot be checked."
+        [ "$ir_got" = "$IR_SUM" ] || die 5 "the checksum of $IR_FILE is not the one this script carries for dumbpipe $IR_VERSION. Nothing was installed."
+        mkdir -p "$WORK/dumbpipe-files" "$HOME/.local/bin" || die 5 "could not make $HOME/.local/bin"
+        # The whole archive is unpacked: its one file is stored as ./dumbpipe, a name that tar does not match against "dumbpipe".
+        tar -xzf "$WORK/$IR_FILE" -C "$WORK/dumbpipe-files" || die 5 "could not unpack $IR_FILE"
+        [ -f "$WORK/dumbpipe-files/dumbpipe" ] || die 5 "$IR_FILE has no dumbpipe program in it."
+        cp "$WORK/dumbpipe-files/dumbpipe" "$HOME/.local/bin/dumbpipe" || die 5 "could not copy dumbpipe into $HOME/.local/bin"
+        chmod +x "$HOME/.local/bin/dumbpipe"
+        dumbpipe_ok "$HOME/.local/bin/dumbpipe" || die 5 "dumbpipe was installed but does not run here. Run '$HOME/.local/bin/dumbpipe --version' to see why."
+        IR_BIN=$HOME/.local/bin/dumbpipe
+        say "  $("$IR_BIN" --version 2>/dev/null </dev/null | head -n 1)"
+    }
+
+    # make_iroh_keys: save the secret key and the secret name unless they are there. The key decides the endpoint id and the
+    # name is what only your phone is told, so keeping both keeps the address the same. Each file is private to the user.
+    make_iroh_keys() {
+        (
+            umask 077
+            mkdir -p "$IR_DIR"
+        ) || die 4 "could not make $IR_DIR"
+        chmod 700 "$IR_DIR" 2>/dev/null || :
+        for ir_pair in secret:32 alpn:16; do
+            ir_name=${ir_pair%%:*}
+            ir_bytes=${ir_pair##*:}
+            if [ -f "$IR_DIR/$ir_name" ] && grep -qx "[0-9a-f]\{$((ir_bytes * 2))\}" "$IR_DIR/$ir_name" 2>/dev/null; then
+                say "  using the saved $ir_name in $IR_DIR"
+                continue
+            fi
+            ir_value=$(random_hex "$ir_bytes")
+            [ "${#ir_value}" = $((ir_bytes * 2)) ] || die 4 "could not make random bytes for the iroh $ir_name (head, od or /dev/urandom is missing)."
+            (
+                umask 077
+                printf '%s\n' "$ir_value" >"$IR_DIR/$ir_name"
+            ) || die 4 "could not write $IR_DIR/$ir_name"
+            say "  made the $ir_name in $IR_DIR"
+        done
+        IR_ALPN=$(head -n 1 "$IR_DIR/alpn")
+        # The endpoint id is the public half of the key. dumbpipe can tell it without any network, as a ticket for the key.
+        ir_ticket=$(IROH_SECRET=$(head -n 1 "$IR_DIR/secret") "$IR_BIN" generate-ticket 2>/dev/null </dev/null | head -n 1)
+        IR_ENDPOINT=$(iroh_id_of "$ir_ticket")
+        [ "${#IR_ENDPOINT}" = 64 ] || die 4 "'dumbpipe generate-ticket' gave a ticket this script cannot read, so the endpoint id is unknown."
+    }
+
+    # write_iroh_runner: the small script the service runs. dumbpipe takes its secret key from the environment; reading the key
+    # here keeps it out of the launchd or systemd file. The secret name has to be on the command line (dumbpipe has no other way
+    # to take it), so another user of this computer can see it in `ps`; the README says so.
+    write_iroh_runner() {
+        IR_RUN=$IR_DIR/run.sh
+        (
+            umask 077
+            {
+                printf '%s\n' '#!/bin/sh' '# Written by dogr setup.sh. Starts dumbpipe with the saved secret key and the secret name.'
+                # shellcheck disable=SC2016  # the $(...) is meant to be written, not expanded here
+                printf 'IROH_SECRET=$(head -n 1 %s) || exit 1\n' "$(sq "$IR_DIR/secret")"
+                printf '%s\n' 'export IROH_SECRET'
+                # shellcheck disable=SC2016
+                printf 'exec %s listen-tcp --host 127.0.0.1:%s --custom-alpn "utf8:$(head -n 1 %s)"\n' "$(sq "$IR_BIN")" "$PORT" "$(sq "$IR_DIR/alpn")"
+            } >"$IR_RUN"
+        ) || die 4 "could not write $IR_RUN"
+        chmod 700 "$IR_RUN" || die 4 "could not make $IR_RUN runnable"
+    }
+
+    # read_iroh_ticket: the ticket the service prints in its log once it listens, in IR_TICKET
+    # shellcheck disable=SC2329  # called through retry
+    read_iroh_ticket() {
+        IR_TICKET=$(sed -n 's/.*dumbpipe connect-tcp \(endpoint[a-z2-7]\{40,\}\).*/\1/p' "$IR_LOG" 2>/dev/null | head -n 1)
+        [ -n "$IR_TICKET" ]
+    }
+
+    # start_iroh_service: write the service file for this system and (re)start the service with a fresh log, so a ticket from an
+    # earlier run is never taken for the new one.
+    start_iroh_service() {
+        (
+            umask 077
+            mkdir -p "${IR_LOG%/*}" && : >"$IR_LOG"
+        ) || die 4 "could not make the log ($IR_LOG)."
+        if [ "$(uname -s)" = Darwin ]; then
+            ir_plist=$HOME/Library/LaunchAgents/dev.dogr.iroh.plist
+            mkdir -p "${ir_plist%/*}" || die 4 "could not make ${ir_plist%/*}"
+            # The values go into XML, so & and < are written the XML way.
+            ir_xml_log=$(printf '%s' "$IR_LOG" | sed 's/&/\&amp;/g; s/</\&lt;/g')
+            ir_xml_run=$(printf '%s' "$IR_RUN" | sed 's/&/\&amp;/g; s/</\&lt;/g')
+            {
+                printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>'
+                printf '%s\n' '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+                printf '%s\n' '<plist version="1.0">' '<dict>'
+                printf '%s\n' '  <key>Label</key><string>dev.dogr.iroh</string>' '  <key>ProgramArguments</key>' '  <array>'
+                printf '    <string>%s</string>\n' "$ir_xml_run"
+                printf '%s\n' '  </array>' '  <key>RunAtLoad</key><true/>' '  <key>KeepAlive</key><true/>'
+                printf '  <key>StandardErrorPath</key><string>%s</string>\n' "$ir_xml_log"
+                printf '  <key>StandardOutPath</key><string>%s</string>\n' "$ir_xml_log"
+                printf '%s\n' '  <key>ProcessType</key><string>Background</string>' '</dict>' '</plist>'
+            } >"$ir_plist" || die 4 "could not write $ir_plist"
+            ir_uid=$(id -u)
+            # An older run's service is stopped first so the new file is the one that counts. That fails when none runs, which is fine.
+            launchctl bootout "gui/$ir_uid/dev.dogr.iroh" >/dev/null 2>&1 </dev/null || :
+            retry launchctl bootstrap "gui/$ir_uid" "$ir_plist" </dev/null || die 4 "'launchctl bootstrap' could not start the iroh service ($ir_plist). Is this a login session of your own user?"
+        else
+            ir_unit=$HOME/.config/systemd/user/dogr-iroh.service
+            mkdir -p "${ir_unit%/*}" || die 4 "could not make ${ir_unit%/*}"
+            {
+                printf '%s\n' '[Unit]' 'Description=iroh tunnel for Collie (dogr setup.sh)' '' '[Service]'
+                printf 'ExecStart="%s"\n' "$IR_RUN"
+                printf '%s\n' 'Restart=always' 'RestartSec=5'
+                printf 'StandardError=append:%s\n' "$IR_LOG"
+                printf 'StandardOutput=append:%s\n' "$IR_LOG"
+                printf '%s\n' '' '[Install]' 'WantedBy=default.target'
+            } >"$ir_unit" || die 4 "could not write $ir_unit"
+            systemctl --user daemon-reload </dev/null || die 4 "'systemctl --user daemon-reload' failed. Is there a systemd user session (are you logged in on this computer)?"
+            systemctl --user enable dogr-iroh.service </dev/null || die 4 "'systemctl --user enable' failed for the iroh service ($ir_unit)."
+            systemctl --user restart dogr-iroh.service </dev/null || die 4 "'systemctl --user restart' could not start the iroh service ($ir_unit). 'journalctl --user -u dogr-iroh' says why."
+        fi
+    }
+
+    # setup_iroh: install dumbpipe, save the keys, run the service, check that it runs with the endpoint id the keys give, and
+    # add COLLIE_PUBLIC_URL with the address to the settings that apply_settings writes next.
+    setup_iroh() {
+        if ! find_dumbpipe; then install_dumbpipe; fi
+        say ""
+        say "==> Making sure the iroh keys and service are there"
+        make_iroh_keys
+        write_iroh_runner
+        start_iroh_service
+        retry read_iroh_ticket || die 4 "the iroh service runs but printed no ticket. $IR_LOG should have a line with it; dumbpipe's errors end up there."
+        # The ticket of the running service starts with its endpoint id. If it is not the one the saved key gives, another
+        # dumbpipe holds the port or the name, and the address would lead to the wrong place.
+        [ "$(iroh_id_of "$IR_TICKET")" = "$IR_ENDPOINT" ] || die 4 "the running service has another endpoint id than the saved key gives. Is an older dumbpipe still running? ($IR_LOG)"
+        if grep -q 'Failed to connect to the home relay' "$IR_LOG" 2>/dev/null; then
+            warn "dumbpipe could not reach its relay server (n0's public relays). Your phone cannot connect until this computer can; check its internet connection and run this command again."
+        fi
+        say "  the service runs; its address is secret and is not shown here (it is in the QR code below)"
+        PUBLIC_URL=$IR_BASE/ir$IR_ENDPOINT$IR_ALPN
+        want COLLIE_PUBLIC_URL "$PUBLIC_URL"
+        if [ "$(env_get COLLIE_PUBLIC_URL)" != "$PUBLIC_URL" ]; then ENV_TOUCHED=1; fi
+    }
+
     # plan TEXT...: one numbered line of the plan
     plan() {
         PLAN_N=$((PLAN_N + 1))
@@ -903,6 +1193,7 @@ EOF
         case $1 in
             --tailscale) set_route tailscale ;;
             --tailcat) set_route tailcat ;;
+            --iroh) set_route iroh ;;
             --derpmap-url)
                 if [ $# -lt 2 ]; then
                     usage >&2
@@ -1004,7 +1295,7 @@ EOF
 
     # The first question: which way does the phone reach this computer? Tailscale first; "no" leads to the other two.
     if [ -z "$ROUTE" ]; then
-        have_tty || die 1 "there is no terminal to ask on. Run again with --tailscale, --tailcat, --proxy or --lan (and --yes) to answer for you."
+        have_tty || die 1 "there is no terminal to ask on. Run again with --tailscale, --tailcat, --iroh, --proxy or --lan (and --yes) to answer for you."
         if ask_yes_no "Do you reach this computer from your phone through Tailscale?"; then
             ROUTE=tailscale
         else
@@ -1020,6 +1311,7 @@ EOF
     case $ROUTE in
         tailscale) check_leftovers ;;
         tailcat) resolve_tailcat ;;
+        iroh) resolve_iroh ;;
         proxy) resolve_proxy ;;
         lan) resolve_lan ;;
     esac
@@ -1067,6 +1359,7 @@ EOF
         plan "Change COLLIE_MUX in $ENV_FILE from $ENV_MUX to $MUX (Collie reads that file before your environment), then restart Collie."
     fi
     if [ "$ROUTE" = tailcat ]; then plan_tailcat; fi
+    if [ "$ROUTE" = iroh ]; then plan_iroh; fi
     if [ "$ROUTE" != tailscale ]; then plan_settings; fi
     case $ROUTE in
         tailscale)
@@ -1075,6 +1368,10 @@ EOF
             ;;
         tailcat)
             plan "Also set COLLIE_PUBLIC_URL to $TC_BASE/<your tailcat address> once the service has printed the address (that is what the QR code carries)."
+            plan "Start Collie in the background (launchd on macOS, systemd --user on Linux), driving $MUX. It answers on 127.0.0.1 only; the tunnel carries the phone to it."
+            ;;
+        iroh)
+            plan "Also set COLLIE_PUBLIC_URL to $IR_BASE/<your iroh address> once the service runs (that is what the QR code carries)."
             plan "Start Collie in the background (launchd on macOS, systemd --user on Linux), driving $MUX. It answers on 127.0.0.1 only; the tunnel carries the phone to it."
             ;;
         proxy)
@@ -1092,6 +1389,17 @@ EOF
         say "Please note: the tailcat address is a secret. Whoever has it can reach Collie's door. Pairing still needs the one-time"
         say "code, and every other request needs the key that pairing hands out. The address ends up in the QR code, in Collie's"
         say "settings file ($ENV_FILE, private to you) and in the output of 'collie status'. Do not share a screenshot of any of them."
+        say ""
+    fi
+    if [ "$ROUTE" = iroh ]; then
+        say ""
+        say "Please note: the iroh address is a secret. Whoever has it can reach Collie's door. Pairing still needs the one-time"
+        say "code, and every other request needs the key that pairing hands out. The address ends up in the QR code, in Collie's"
+        say "settings file ($ENV_FILE, private to you) and in the output of 'collie status'. Do not share a screenshot of any of them."
+        say "Its second half is a secret name that dumbpipe takes on its command line, so other users of this computer can see it"
+        say "with 'ps'. The saved files are in $IR_DIR, private to you."
+        say "The tunnel goes through n0's public iroh relay servers until your phone and this computer find a direct path. They are"
+        say "free; n0 says they are for development and testing and promises no speed or uptime. The traffic is end-to-end encrypted."
         say ""
     fi
     if [ "$ROUTE" = lan ]; then
@@ -1166,6 +1474,7 @@ EOF
     COLLIE_MUX=$MUX
     export COLLIE_MUX
     if [ "$ROUTE" = tailcat ]; then setup_tailcat; fi
+    if [ "$ROUTE" = iroh ]; then setup_iroh; fi
     if [ "$ROUTE" != tailscale ]; then apply_settings; fi
 
     # Step 3: start Collie. It prints lines starting with "setup:" for what is missing; it never stops on them itself.
@@ -1239,7 +1548,7 @@ EOF
                 warn "$phone_url did not answer from this computer. If your phone cannot connect either, run 'collie doctor'."
             fi
             ;;
-        proxy | lan | tailcat)
+        proxy | lan | tailcat | iroh)
             # Collie must give the address that was asked for: if it does not, it did not read the settings.
             if [ "$phone_url" != "$PUBLIC_URL" ]; then
                 say ""
@@ -1276,6 +1585,8 @@ EOF
             elif [ "$ROUTE" = tailcat ]; then
                 # The tunnel ends at the phone, so there is no address here to ask. The service log is the evidence.
                 say "  through tailcat: the service runs and Collie gives the address it printed (log: $TC_LOG)"
+            elif [ "$ROUTE" = iroh ]; then
+                say "  through iroh: the service runs and Collie gives the address of its endpoint (log: $IR_LOG)"
             else
                 say "  on the local network: $phone_url answers"
             fi
@@ -1301,6 +1612,14 @@ EOF
     if [ "$ROUTE" = tailcat ]; then
         say "The first connection can take several seconds while the tunnel is built. The tailcat service keeps running and"
         say "starts again after a restart; the address stays the same as long as the key '$TC_KEY' exists. If a pairing code"
+        say "runs out, run: collie pair"
+        if [ "$(uname -s)" != Darwin ]; then
+            say "To keep the service running when you are logged out (a server), run once: loginctl enable-linger \$USER"
+        fi
+    fi
+    if [ "$ROUTE" = iroh ]; then
+        say "The first connection can take several seconds while the tunnel is built. The dumbpipe service keeps running and"
+        say "starts again after a restart; the address stays the same as long as the files in $IR_DIR exist. If a pairing code"
         say "runs out, run: collie pair"
         if [ "$(uname -s)" != Darwin ]; then
             say "To keep the service running when you are logged out (a server), run once: loginctl enable-linger \$USER"

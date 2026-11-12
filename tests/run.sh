@@ -19,7 +19,7 @@ CASE=
 # ---- the tools setup.sh may use (and the stub installer needs), linked into one folder -----------------------------------------------------------------
 BELT=$ROOT/belt
 mkdir -p "$BELT"
-for tool in sh sed grep head tail tr tee cat mktemp rm sleep uname cp mkdir chmod awk tar gzip id wc date env; do
+for tool in sh sed grep head tail tr tee cat mktemp rm sleep uname cp mkdir chmod awk tar gzip id wc date env od; do
     found=$(command -v "$tool") || {
         echo "this test needs '$tool' and did not find it"
         exit 1
@@ -77,6 +77,7 @@ case $url in
                 fi
                 ;;
             */tailcat_*_linux_*.tar.gz) cp "$STUB_TC_TARBALL" "$out" ;;
+            */dumbpipe-v*.tar.gz) cp "$STUB_IR_TARBALL" "$out" ;;
             */checksums.txt) if [ "${STUB_TC_BAD_SUM:-0}" = 1 ]; then cp "$STUB_TC_BADSUMS" "$out"; else cp "$STUB_TC_CHECKSUMS" "$out"; fi ;;
             *releases.herdr.dev/core/* | *example.test/core.sh) cp "$STUB_HC_INSTALLER" "$out" ;;
             *herdr.dev/install.sh*) cp "$STUB_HERDR_INSTALLER" "$out" ;;
@@ -278,9 +279,22 @@ EOF
 cat >"$STUBS/launchctl" <<'EOF'
 #!/bin/sh
 echo "launchctl $*" >>"$STUB_LOG"
+# The line the iroh service prints into its log once it listens, the way 'dumbpipe listen-tcp' does it. STUB_IR_NO_TICKET: it
+# prints none. STUB_IR_RELAY_WARN: it could not reach its relay. STUB_IR_LOG_TICKET: it prints a ticket of another key.
+iroh_log() {
+    [ "${STUB_IR_NO_TICKET:-0}" = 1 ] && return 0
+    mkdir -p "$HOME/.local/state/dogr"
+    {
+        echo "Forwarding incoming requests to '127.0.0.1:8787'."
+        if [ "${STUB_IR_RELAY_WARN:-0}" = 1 ]; then echo "Warning: Failed to connect to the home relay"; fi
+        echo "To connect, use e.g.:"
+        echo "dumbpipe connect-tcp ${STUB_IR_LOG_TICKET:-$STUB_IR_TICKET}"
+    } >>"$HOME/.local/state/dogr/iroh.log"
+}
 case $1 in
     bootstrap)
         [ "${STUB_LAUNCH_FAIL:-0}" = 1 ] && { echo "bootstrap failed"; exit 5; }
+        case "$*" in *dev.dogr.iroh*) iroh_log; exit 0 ;; esac
         if [ "${STUB_TC_NO_ADDRESS:-0}" != 1 ]; then
             mkdir -p "$HOME/.local/state/dogr"
             echo "# Server listening with saved key \"herdogr\": $STUB_TC_ADDRESS" >>"$HOME/.local/state/dogr/tailcat.log"
@@ -292,9 +306,22 @@ EOF
 cat >"$STUBS/systemctl" <<'EOF'
 #!/bin/sh
 echo "systemctl $*" >>"$STUB_LOG"
+# The line the iroh service prints into its log once it listens, the way 'dumbpipe listen-tcp' does it. STUB_IR_NO_TICKET: it
+# prints none. STUB_IR_RELAY_WARN: it could not reach its relay. STUB_IR_LOG_TICKET: it prints a ticket of another key.
+iroh_log() {
+    [ "${STUB_IR_NO_TICKET:-0}" = 1 ] && return 0
+    mkdir -p "$HOME/.local/state/dogr"
+    {
+        echo "Forwarding incoming requests to '127.0.0.1:8787'."
+        if [ "${STUB_IR_RELAY_WARN:-0}" = 1 ]; then echo "Warning: Failed to connect to the home relay"; fi
+        echo "To connect, use e.g.:"
+        echo "dumbpipe connect-tcp ${STUB_IR_LOG_TICKET:-$STUB_IR_TICKET}"
+    } >>"$HOME/.local/state/dogr/iroh.log"
+}
 case " $* " in
     *" restart "*)
         [ "${STUB_LAUNCH_FAIL:-0}" = 1 ] && { echo "restart failed"; exit 5; }
+        case "$*" in *dogr-iroh*) iroh_log; exit 0 ;; esac
         if [ "${STUB_TC_NO_ADDRESS:-0}" != 1 ]; then
             mkdir -p "$HOME/.local/state/dogr"
             echo "# Server listening with saved key \"herdogr\": $STUB_TC_ADDRESS" >>"$HOME/.local/state/dogr/tailcat.log"
@@ -303,6 +330,43 @@ case " $* " in
 esac
 exit 0
 EOF
+
+# dumbpipe: the commands setup.sh uses. generate-ticket answers STUB_IR_TICKET after checking that a key of the right length came
+# in IROH_SECRET (the real one derives the ticket from the key); the log is the only place the key could leak to, so only its
+# length is written down.
+cat >"$STUBS/dumbpipe" <<'EOF'
+#!/bin/sh
+case $1 in
+    generate-ticket) echo "dumbpipe generate-ticket (key of ${#IROH_SECRET} characters)" >>"$STUB_LOG" ;;
+    *) echo "dumbpipe $*" >>"$STUB_LOG" ;;
+esac
+case $1 in
+    --version) echo "dumbpipe 0.40.1" ;;
+    generate-ticket)
+        [ "${#IROH_SECRET}" = 64 ] || { echo "no usable key" >&2; exit 1; }
+        echo "$STUB_IR_TICKET"
+        ;;
+    listen-tcp)
+        case " $* " in
+            *" --help "*) [ "${STUB_IR_NO_ALPN:-0}" = 1 ] || echo "      --custom-alpn <CUSTOM_ALPN>" ;;
+        esac
+        ;;
+esac
+exit 0
+EOF
+# An older dumbpipe, the kind that speaks an older iroh.
+sed 's/0\.40\.1/0.39.0/' "$STUBS/dumbpipe" >"$STUBS/dumbpipe-old"
+
+# The dumbpipe release the script downloads: a tarball with the stub inside, stored as ./dumbpipe the way the real one is.
+IR_TICKET_OK=endpointacpwdg42u6uxy4csspq574kv4hewclaizzi7qyfqx6qn7gsvv7ihkaa
+IR_ID=9f619b9aa7a97c705293e1dff155e1c9612c08ce51f860b0bfa0df9a55afd075
+IR_TICKET_OTHER=endpointabaq7rmj4blwmphmqpwb4mbcorzzbcpvr2dw3zb46qcnrldmmm5gcaa
+IRDIR=$ROOT/irrelease
+mkdir -p "$IRDIR/pack"
+cp "$STUBS/dumbpipe" "$IRDIR/pack/dumbpipe"
+chmod +x "$IRDIR/pack/dumbpipe"
+(cd "$IRDIR/pack" && tar czf ../dumbpipe.tar.gz ./dumbpipe)
+if command -v sha256sum >/dev/null 2>&1; then IRSUM=$(sha256sum "$IRDIR/dumbpipe.tar.gz" | awk '{print $1}'); else IRSUM=$(shasum -a 256 "$IRDIR/dumbpipe.tar.gz" | awk '{print $1}'); fi
 
 # The tailcat release the Linux branch downloads: a tarball with the stub inside, and a checksum file that names it for
 # every architecture (plus a wrong one for the case about a mismatch).
@@ -320,7 +384,7 @@ for arch in amd64 arm64 armv7; do
 done
 echo "$BADSUM  tailcat_0.7.0_windows_amd64.zip" >>"$TCDIR/checksums.txt"
 
-chmod +x "$STUBS/curl" "$STUBS/collie" "$STUBS/installer.sh" "$STUBS/hc" "$STUBS/herdr" "$STUBS/hc-installer.sh" "$STUBS/herdr-installer.sh" "$STUBS/ifconfig" "$STUBS/ip" "$STUBS/uname" "$STUBS/tailcat" "$STUBS/brew" "$STUBS/launchctl" "$STUBS/systemctl"
+chmod +x "$STUBS/curl" "$STUBS/collie" "$STUBS/installer.sh" "$STUBS/hc" "$STUBS/herdr" "$STUBS/hc-installer.sh" "$STUBS/herdr-installer.sh" "$STUBS/ifconfig" "$STUBS/ip" "$STUBS/uname" "$STUBS/tailcat" "$STUBS/brew" "$STUBS/launchctl" "$STUBS/systemctl" "$STUBS/dumbpipe" "$STUBS/dumbpipe-old"
 
 # ---- the harness --------------------------------------------------------------------------------------------------------
 
@@ -345,6 +409,9 @@ quote() {
 #   TAILCAT_INSTALLED=1  a computer that has tailcat already
 #   TC_KEY=1          a saved tailcat key named herdogr exists already
 #   NO_BREW=1         a computer without Homebrew
+#   IROH_INSTALLED=1  a computer that has dumbpipe already (IROH_INSTALLED=old: one that is too old for the phone)
+#   IR_KEYS=1         the iroh secret key and secret name are saved already (IR_KEYS=bad: the secret key file is not a key)
+#   IR_OLDLOG=1       the log of an earlier iroh service run is there, with another ticket in it
 #   TC_OLDLOG=1       the log of an earlier tailcat service run is there, with another address in it
 #   PIPE=1            the whole script arrives through a pipe, the way `curl ... | sh` runs it
 #   CUT=1             like PIPE=1 but the download stops half way
@@ -374,6 +441,9 @@ run_case() {
         echo "export STUB_TC_TARBALL=$TCDIR/tailcat.tar.gz"
         echo "export STUB_TC_CHECKSUMS=$TCDIR/checksums.txt"
         echo "export STUB_TC_BADSUMS=$TCDIR/badsums.txt"
+        echo "export STUB_IR_TICKET=$IR_TICKET_OK"
+        echo "export STUB_IR_TARBALL=$IRDIR/dumbpipe.tar.gz"
+        echo "export DOGR_DUMBPIPE_SHA256=$IRSUM"
         echo "export DOGR_TTY=$sandbox/tty"
         echo "export DOGR_TRIES=2"
         echo "export DOGR_POLL_DELAY=0"
@@ -387,6 +457,9 @@ run_case() {
     tc_key=0
     no_brew=0
     tc_oldlog=0
+    ir_installed=0
+    ir_keys=0
+    ir_oldlog=0
     ask=
     envfile=
     mode="file"
@@ -401,6 +474,11 @@ run_case() {
             TC_KEY=1) tc_key=1 ;;
             NO_BREW=1) no_brew=1 ;;
             TC_OLDLOG=1) tc_oldlog=1 ;;
+            IROH_INSTALLED=1) ir_installed=1 ;;
+            IROH_INSTALLED=old) ir_installed=old ;;
+            IR_KEYS=1) ir_keys=1 ;;
+            IR_KEYS=bad) ir_keys=bad ;;
+            IR_OLDLOG=1) ir_oldlog=1 ;;
             ASK=*) ask=${1#ASK=} ;;
             ENVFILE=*) envfile=${1#ENVFILE=} ;;
             PIPE=1) mode="pipe" ;;
@@ -425,6 +503,18 @@ run_case() {
     if [ "$no_brew" != 1 ]; then cp "$STUBS/brew" "$sandbox/path/brew"; fi
     if [ "$tc_installed" = 1 ]; then cp "$STUBS/tailcat" "$sandbox/path/tailcat"; fi
     if [ "$tc_key" = 1 ]; then echo herdogr >"$sandbox/home/.stubkeys"; fi
+    if [ "$ir_installed" = 1 ]; then cp "$STUBS/dumbpipe" "$sandbox/path/dumbpipe"; fi
+    if [ "$ir_installed" = old ]; then cp "$STUBS/dumbpipe-old" "$sandbox/path/dumbpipe"; fi
+    if [ "$ir_keys" != 0 ]; then
+        mkdir -p "$sandbox/home/.config/dogr/iroh"
+        echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa >"$sandbox/home/.config/dogr/iroh/secret"
+        echo bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb >"$sandbox/home/.config/dogr/iroh/alpn"
+        if [ "$ir_keys" = bad ]; then echo "not a key" >"$sandbox/home/.config/dogr/iroh/secret"; fi
+    fi
+    if [ "$ir_oldlog" = 1 ]; then
+        mkdir -p "$sandbox/home/.local/state/dogr"
+        echo "dumbpipe connect-tcp $IR_TICKET_OTHER" >"$sandbox/home/.local/state/dogr/iroh.log"
+    fi
     if [ "$tc_oldlog" = 1 ]; then
         mkdir -p "$sandbox/home/.local/state/dogr"
         echo "# Server listening with saved key \"herdogr\": tc$(awk 'BEGIN { for (i = 0; i < 152; i++) printf "b" }')" >"$sandbox/home/.local/state/dogr/tailcat.log"
@@ -482,6 +572,12 @@ expect_file() { if [ -e "$sandbox/home/$1" ]; then ok; else bad "no file in the 
 expect_no_file() { if [ -e "$sandbox/home/$1" ]; then bad "unexpected file in the home folder: $1"; else ok; fi; }
 # expect_file_has PATH TEXT: that file has that text
 expect_file_has() { if grep -qF -- "$2" "$sandbox/home/$1" 2>/dev/null; then ok; else bad "home folder file $1 lacks: $2"; fi; }
+# expect_file_lacks PATH TEXT: that file does not have that text
+expect_file_lacks() { if grep -qF -- "$2" "$sandbox/home/$1" 2>/dev/null; then bad "home folder file $1 has: $2"; else ok; fi; }
+# expect_mode PATH MODE: that file or folder (path relative to the sandbox home) has exactly that permission, for example 600
+expect_mode() {
+    if [ -n "$(find "$sandbox/home/$1" -maxdepth 0 -perm "$2" 2>/dev/null)" ]; then ok; else bad "$1 does not have mode $2"; fi
+}
 # expect_plist_valid: the launchd file the script wrote is a valid property list (checked where the system has plutil)
 expect_plist_valid() {
     command -v plutil >/dev/null 2>&1 || return 0
@@ -1500,6 +1596,256 @@ expect_out "--tailcat"
 expect_out "--derpmap-url"
 expect_out "--region"
 
+# ---- the iroh route -------------------------------------------------------------------------------------------------------
+
+PLIST=Library/LaunchAgents/dev.dogr.iroh.plist
+UNIT=.config/systemd/user/dogr-iroh.service
+IRDIRH=.config/dogr/iroh
+# ir_url: the address Collie must be given, from the id of the stub ticket and the secret name the run made
+ir_url() { printf 'http://iroh.invalid/ir%s%s' "$IR_ID" "$(cat "$sandbox/home/$IRDIRH/alpn" 2>/dev/null)"; }
+IR_REL=https://github.com/n0-computer/dumbpipe/releases/download/v0.40.1
+
+# macOS from nothing: the release is downloaded and checked, the keys are made, launchd runs the runner, the settings go into the
+# .env, and the pairing code comes last.
+run_case "iroh: macOS from nothing" STUB_OS=Darwin STUB_ARCH=arm64 -- --iroh --yes
+expect_rc 0
+expect_called "download $IR_REL/dumbpipe-v0.40.1-darwin-aarch64.tar.gz"
+expect_file ".local/bin/dumbpipe"
+expect_called "dumbpipe generate-ticket (key of 64 characters)"
+expect_file "$IRDIRH/secret"
+expect_file "$IRDIRH/alpn"
+expect_file "$IRDIRH/run.sh"
+expect_mode "$IRDIRH" 700
+expect_mode "$IRDIRH/secret" 600
+expect_mode "$IRDIRH/alpn" 600
+expect_mode "$IRDIRH/run.sh" 700
+expect_file_has "$IRDIRH/run.sh" "listen-tcp --host 127.0.0.1:8787 --custom-alpn"
+expect_file_has "$IRDIRH/run.sh" ".local/bin/dumbpipe"
+expect_file_lacks "$IRDIRH/run.sh" "$(cat "$sandbox/home/$IRDIRH/secret" 2>/dev/null)"
+expect_file_lacks "$IRDIRH/run.sh" "$(cat "$sandbox/home/$IRDIRH/alpn" 2>/dev/null)"
+expect_called "launchctl bootstrap gui/"
+expect_file "$PLIST"
+expect_file_has "$PLIST" "$IRDIRH/run.sh"
+expect_file_has "$PLIST" ".local/state/dogr/iroh.log"
+expect_plist_valid
+expect_env_line "COLLIE_SKIP_SERVE=1"
+expect_env_line "COLLIE_PUBLIC_HOSTS=127.0.0.1:8787"
+expect_env_line "COLLIE_PUBLIC_URL=$(ir_url)"
+expect_order "download $IR_REL" "dumbpipe generate-ticket"
+expect_order "dumbpipe generate-ticket" "launchctl bootstrap"
+expect_order "launchctl bootout" "launchctl bootstrap"
+expect_order "launchctl bootstrap" "collie start"
+expect_order "collie start" "collie pair"
+expect_not_called "brew"
+expect_not_called "systemctl"
+expect_not_called "health http://iroh.invalid"
+expect_out "ABCD2345"
+expect_out "several seconds"
+expect_out "relay"
+# The address is a secret: the script never prints it itself (only Collie's QR code does), nor the key or the name.
+expect_no_out "$IR_ID"
+expect_no_out "$(cat "$sandbox/home/$IRDIRH/secret" 2>/dev/null)"
+expect_no_out "$(cat "$sandbox/home/$IRDIRH/alpn" 2>/dev/null)"
+
+# The plan says everything, changes nothing.
+run_case "iroh: dry run on macOS" STUB_OS=Darwin STUB_ARCH=arm64 -- --iroh --dry-run
+expect_rc 0
+expect_out "Install dumbpipe 0.40.1"
+expect_out "dumbpipe-v0.40.1-darwin-aarch64.tar.gz"
+expect_out "secret key"
+expect_out "launchd"
+expect_out "COLLIE_PUBLIC_URL"
+expect_out "<your iroh address>"
+expect_out "public iroh relay"
+expect_out "Dry run: nothing was changed."
+expect_not_called "download"
+expect_not_called "launchctl"
+expect_not_called "dumbpipe"
+expect_not_called "collie start"
+expect_no_file "$PLIST"
+expect_no_file "$IRDIRH"
+expect_no_file ".config/collie/.env"
+
+run_case "iroh: dry run on Linux names the download" STUB_OS=Linux STUB_ARCH=x86_64 -- --iroh --dry-run
+expect_rc 0
+expect_out "dumbpipe-v0.40.1-linux-x86_64.tar.gz"
+expect_out "systemd"
+expect_not_called "download"
+
+run_case "iroh: dry run on Linux arm64" STUB_OS=Linux STUB_ARCH=aarch64 -- --iroh --dry-run
+expect_rc 0
+expect_out "dumbpipe-v0.40.1-linux-aarch64.tar.gz"
+
+run_case "iroh: declined at the question" STUB_OS=Darwin STUB_ARCH=arm64 ASK=n -- --iroh
+expect_rc 6
+expect_not_called "download"
+expect_not_called "launchctl"
+expect_no_file "$PLIST"
+expect_no_file "$IRDIRH"
+
+# Linux from nothing: systemd --user runs the runner.
+run_case "iroh: Linux from nothing" STUB_OS=Linux STUB_ARCH=x86_64 -- --iroh --yes
+expect_rc 0
+expect_called "download $IR_REL/dumbpipe-v0.40.1-linux-x86_64.tar.gz"
+expect_not_called "launchctl"
+expect_not_called "brew"
+expect_file ".local/bin/dumbpipe"
+expect_file "$UNIT"
+expect_file_has "$UNIT" "$IRDIRH/run.sh"
+expect_file_has "$UNIT" ".local/state/dogr/iroh.log"
+expect_called "systemctl --user daemon-reload"
+expect_called "systemctl --user enable dogr-iroh.service"
+expect_called "systemctl --user restart dogr-iroh.service"
+expect_order "systemctl --user restart" "collie start"
+expect_env_line "COLLIE_PUBLIC_URL=$(ir_url)"
+expect_out "enable-linger"
+expect_no_out "$IR_ID"
+
+run_case "iroh: a processor with no release" STUB_OS=Linux STUB_ARCH=armv7l -- --iroh --yes
+expect_rc 5
+expect_out "armv7l"
+expect_not_called "download"
+expect_not_called "collie start"
+
+run_case "iroh: the release address can be chosen" STUB_OS=Linux STUB_ARCH=x86_64 DOGR_DUMBPIPE_RELEASE_URL=https://example.test/dp -- --iroh --yes
+expect_rc 0
+expect_called "download https://example.test/dp/dumbpipe-v0.40.1-linux-x86_64.tar.gz"
+
+# Without a checksum override the file must have the digest the script carries: the stub does not.
+run_case "iroh: the checksum does not match" STUB_OS=Linux STUB_ARCH=x86_64 DOGR_DUMBPIPE_SHA256= -- --iroh --yes
+expect_rc 5
+expect_out "checksum"
+expect_no_file ".local/bin/dumbpipe"
+expect_not_called "collie start"
+
+run_case "iroh: the download fails" STUB_OS=Linux STUB_ARCH=x86_64 STUB_DOWNLOAD=fail -- --iroh --yes
+expect_rc 5
+expect_out "could not download"
+expect_not_called "collie start"
+
+# dumbpipe that is there already.
+run_case "iroh: dumbpipe is installed already" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=1 -- --iroh --yes
+expect_rc 0
+expect_not_called "download"
+expect_no_file ".local/bin/dumbpipe"
+expect_file_has "$IRDIRH/run.sh" "/path/dumbpipe"
+
+run_case "iroh: a dumbpipe that is too old is passed over" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=old -- --iroh --yes
+expect_rc 0
+expect_called "download $IR_REL/dumbpipe-v0.40.1-darwin-aarch64.tar.gz"
+expect_file ".local/bin/dumbpipe"
+expect_file_has "$IRDIRH/run.sh" ".local/bin/dumbpipe"
+
+run_case "iroh: a dumbpipe without --custom-alpn is passed over" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=1 STUB_IR_NO_ALPN=1 -- --iroh --yes
+expect_rc 5
+expect_called "download"
+
+# The keys.
+run_case "iroh: saved keys are used again" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=1 IR_KEYS=1 -- --iroh --yes
+expect_rc 0
+expect_out "using the saved secret"
+expect_out "using the saved alpn"
+expect_file_has "$IRDIRH/secret" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+expect_env_line "COLLIE_PUBLIC_URL=http://iroh.invalid/ir${IR_ID}bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+run_case "iroh: a saved key that is not a key is replaced" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=1 IR_KEYS=bad -- --iroh --yes
+expect_rc 0
+expect_file_lacks "$IRDIRH/secret" "not a key"
+expect_file_has "$IRDIRH/alpn" "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+expect_called "dumbpipe generate-ticket (key of 64 characters)"
+
+run_case "iroh: a ticket that cannot be read" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=1 STUB_IR_TICKET=endpointzzzz -- --iroh --yes
+expect_rc 4
+expect_out "cannot read"
+expect_not_called "launchctl bootstrap"
+expect_not_called "collie start"
+
+# The service and its ticket.
+run_case "iroh: the service prints no ticket, an old log is not trusted" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=1 STUB_IR_NO_TICKET=1 IR_OLDLOG=1 -- --iroh --yes
+expect_rc 4
+expect_out "ticket"
+expect_not_called "collie start"
+expect_not_called "collie pair"
+expect_no_env "iroh.invalid"
+
+run_case "iroh: a new ticket replaces the one in an old log" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=1 IR_OLDLOG=1 -- --iroh --yes
+expect_rc 0
+expect_env_line "COLLIE_PUBLIC_URL=$(ir_url)"
+
+run_case "iroh: the running service has another endpoint id" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=1 STUB_IR_LOG_TICKET=$IR_TICKET_OTHER -- --iroh --yes
+expect_rc 4
+expect_out "another endpoint id"
+expect_not_called "collie start"
+expect_no_env "iroh.invalid"
+
+run_case "iroh: the relay cannot be reached" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=1 STUB_IR_RELAY_WARN=1 -- --iroh --yes
+expect_rc 0
+expect_out "could not reach its relay"
+expect_called "collie pair"
+
+run_case "iroh: launchd cannot start the service" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=1 STUB_LAUNCH_FAIL=1 -- --iroh --yes
+expect_rc 4
+expect_out "launchctl"
+expect_not_called "collie start"
+
+run_case "iroh: systemd cannot start the service" STUB_OS=Linux STUB_ARCH=x86_64 IROH_INSTALLED=1 STUB_LAUNCH_FAIL=1 -- --iroh --yes
+expect_rc 4
+expect_out "systemctl"
+expect_not_called "collie start"
+
+# What goes into Collie's .env.
+run_case "iroh: another Collie port" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=1 ENVFILE="COLLIE_PORT=9000" -- --iroh --yes
+expect_rc 0
+expect_file_has "$IRDIRH/run.sh" "127.0.0.1:9000"
+expect_env_line "COLLIE_PUBLIC_HOSTS=127.0.0.1:9000"
+expect_env_line "COLLIE_PUBLIC_URL=$(ir_url)"
+
+run_case "iroh: a wide bind is taken back" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=1 ENVFILE="COLLIE_HOST=192.168.1.5" -- --iroh --yes
+expect_rc 0
+expect_env_line "COLLIE_HOST=127.0.0.1"
+
+run_case "iroh: the same settings again change nothing" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=1 IR_KEYS=1 ENVFILE="COLLIE_SKIP_SERVE=1
+COLLIE_PUBLIC_HOSTS=127.0.0.1:8787
+COLLIE_PUBLIC_URL=http://iroh.invalid/ir${IR_ID}bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" -- --iroh --yes
+expect_rc 0
+expect_not_called "collie restart"
+expect_called "launchctl bootout gui/"
+
+run_case "iroh: an older address is replaced and Collie restarted" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=1 IR_KEYS=1 ENVFILE="COLLIE_SKIP_SERVE=1
+COLLIE_PUBLIC_HOSTS=127.0.0.1:8787
+COLLIE_PUBLIC_URL=http://iroh.invalid/irOLD" -- --iroh --yes
+expect_rc 0
+expect_env_line "COLLIE_PUBLIC_URL=http://iroh.invalid/ir${IR_ID}bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+expect_called "collie restart"
+
+run_case "iroh: Collie ignores the settings" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=1 STUB_IGNORE_ENV=1 -- --iroh --yes
+expect_rc 3
+expect_out "did not pick up"
+expect_not_called "collie pair"
+
+# The questions: iroh is the fourth of the "other" ways.
+run_case "iroh: through the route questions" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=1 ASK=n,4,y --
+expect_rc 0
+expect_called "dumbpipe generate-ticket"
+expect_called "collie pair"
+
+run_case "iroh: the route question takes the word too" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=1 ASK=n,iroh,y --
+expect_rc 0
+expect_called "dumbpipe generate-ticket"
+
+run_case "iroh: two ways at once" -- --iroh --tailcat
+expect_rc 1
+expect_out "choose one way"
+
+run_case "iroh: two ways at once, the other way round" -- --proxy --url https://collie.example.com --iroh
+expect_rc 1
+expect_out "choose one way"
+
+run_case "help names the iroh route" -- --help
+expect_rc 0
+expect_out "--iroh"
+expect_out "dumbpipe"
+
 # ---- download progress ----------------------------------------------------------------------------------------------------
 # The installers (Collie's, herdr's, herdr-core's) download quietly. setup.sh puts a small `curl` in front of them that draws
 # "12.3 / 45.6 MB" while a file comes in, but only on a terminal (or when DOGR_PROGRESS=always asks for it).
@@ -1549,6 +1895,8 @@ expect_rc 5
 expect_out "installer failed"
 
 # The script's own download (the tailcat release on Linux) goes through the same wrapper.
+run_case "progress: the iroh download" STUB_OS=Linux STUB_ARCH=x86_64 DOGR_PROGRESS=always -- --iroh --yes
+expect_rc 0
 run_case "progress: the tailcat download" STUB_OS=Linux STUB_ARCH=x86_64 DOGR_PROGRESS=always -- --tailcat --yes
 expect_rc 0
 expect_called "curl -D"
