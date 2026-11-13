@@ -356,6 +356,25 @@ exit 0
 EOF
 # An older dumbpipe, the kind that speaks an older iroh.
 sed 's/0\.40\.1/0.39.0/' "$STUBS/dumbpipe" >"$STUBS/dumbpipe-old"
+# A dumbpipe that also has the --relay option (the pinned build): its help lists the option.
+sed 's|echo "      --custom-alpn <CUSTOM_ALPN>"|echo "      --custom-alpn <CUSTOM_ALPN>"; echo "      --relay <URL>"|' "$STUBS/dumbpipe" >"$STUBS/dumbpipe-relay"
+
+# cargo: 'cargo install --root DIR ...' puts the relay-capable dumbpipe into DIR/bin, the way the real build does.
+# STUB_CARGO_FAIL=1: the build fails.
+cat >"$STUBS/cargo" <<'EOF'
+#!/bin/sh
+echo "cargo $*" >>"$STUB_LOG"
+[ "${STUB_CARGO_FAIL:-0}" = 1 ] && exit 1
+root=
+while [ $# -gt 0 ]; do
+    case $1 in --root) root=$2; shift ;; esac
+    shift
+done
+mkdir -p "$root/bin"
+cp "$STUB_DUMBPIPE_RELAY" "$root/bin/dumbpipe"
+chmod +x "$root/bin/dumbpipe"
+exit 0
+EOF
 
 # The dumbpipe release the script downloads: a tarball with the stub inside, stored as ./dumbpipe the way the real one is.
 IR_TICKET_OK=endpointacpwdg42u6uxy4csspq574kv4hewclaizzi7qyfqx6qn7gsvv7ihkaa
@@ -384,7 +403,7 @@ for arch in amd64 arm64 armv7; do
 done
 echo "$BADSUM  tailcat_0.7.0_windows_amd64.zip" >>"$TCDIR/checksums.txt"
 
-chmod +x "$STUBS/curl" "$STUBS/collie" "$STUBS/installer.sh" "$STUBS/hc" "$STUBS/herdr" "$STUBS/hc-installer.sh" "$STUBS/herdr-installer.sh" "$STUBS/ifconfig" "$STUBS/ip" "$STUBS/uname" "$STUBS/tailcat" "$STUBS/brew" "$STUBS/launchctl" "$STUBS/systemctl" "$STUBS/dumbpipe" "$STUBS/dumbpipe-old"
+chmod +x "$STUBS/curl" "$STUBS/collie" "$STUBS/installer.sh" "$STUBS/hc" "$STUBS/herdr" "$STUBS/hc-installer.sh" "$STUBS/herdr-installer.sh" "$STUBS/ifconfig" "$STUBS/ip" "$STUBS/uname" "$STUBS/tailcat" "$STUBS/brew" "$STUBS/launchctl" "$STUBS/systemctl" "$STUBS/dumbpipe" "$STUBS/dumbpipe-old" "$STUBS/dumbpipe-relay" "$STUBS/cargo"
 
 # ---- the harness --------------------------------------------------------------------------------------------------------
 
@@ -410,6 +429,8 @@ quote() {
 #   TC_KEY=1          a saved tailcat key named herdogr exists already
 #   NO_BREW=1         a computer without Homebrew
 #   IROH_INSTALLED=1  a computer that has dumbpipe already (IROH_INSTALLED=old: one that is too old for the phone)
+#   IROH_INSTALLED=relay  a computer whose dumbpipe also has the --relay option
+#   CARGO=1           a computer that has Rust's cargo (it builds the relay-capable dumbpipe)
 #   IR_KEYS=1         the iroh secret key and secret name are saved already (IR_KEYS=bad: the secret key file is not a key)
 #   IR_OLDLOG=1       the log of an earlier iroh service run is there, with another ticket in it
 #   TC_OLDLOG=1       the log of an earlier tailcat service run is there, with another address in it
@@ -443,6 +464,7 @@ run_case() {
         echo "export STUB_TC_BADSUMS=$TCDIR/badsums.txt"
         echo "export STUB_IR_TICKET=$IR_TICKET_OK"
         echo "export STUB_IR_TARBALL=$IRDIR/dumbpipe.tar.gz"
+        echo "export STUB_DUMBPIPE_RELAY=$STUBS/dumbpipe-relay"
         echo "export DOGR_DUMBPIPE_SHA256=$IRSUM"
         echo "export DOGR_TTY=$sandbox/tty"
         echo "export DOGR_TRIES=2"
@@ -460,6 +482,7 @@ run_case() {
     ir_installed=0
     ir_keys=0
     ir_oldlog=0
+    cargo=0
     ask=
     envfile=
     mode="file"
@@ -476,6 +499,8 @@ run_case() {
             TC_OLDLOG=1) tc_oldlog=1 ;;
             IROH_INSTALLED=1) ir_installed=1 ;;
             IROH_INSTALLED=old) ir_installed=old ;;
+            IROH_INSTALLED=relay) ir_installed=relay ;;
+            CARGO=1) cargo=1 ;;
             IR_KEYS=1) ir_keys=1 ;;
             IR_KEYS=bad) ir_keys=bad ;;
             IR_OLDLOG=1) ir_oldlog=1 ;;
@@ -505,6 +530,8 @@ run_case() {
     if [ "$tc_key" = 1 ]; then echo herdogr >"$sandbox/home/.stubkeys"; fi
     if [ "$ir_installed" = 1 ]; then cp "$STUBS/dumbpipe" "$sandbox/path/dumbpipe"; fi
     if [ "$ir_installed" = old ]; then cp "$STUBS/dumbpipe-old" "$sandbox/path/dumbpipe"; fi
+    if [ "$ir_installed" = relay ]; then cp "$STUBS/dumbpipe-relay" "$sandbox/path/dumbpipe"; fi
+    if [ "$cargo" = 1 ]; then cp "$STUBS/cargo" "$sandbox/path/cargo"; fi
     if [ "$ir_keys" != 0 ]; then
         mkdir -p "$sandbox/home/.config/dogr/iroh"
         echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa >"$sandbox/home/.config/dogr/iroh/secret"
@@ -1792,6 +1819,97 @@ run_case "iroh: systemd cannot start the service" STUB_OS=Linux STUB_ARCH=x86_64
 expect_rc 4
 expect_out "systemctl"
 expect_not_called "collie start"
+
+# A relay server of your own.
+run_case "iroh relay: no relay asked, the service line is the old one" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=1 -- --iroh --yes
+expect_rc 0
+expect_file_lacks "$IRDIRH/run.sh" "--relay"
+
+run_case "iroh relay: a dumbpipe that has the option is used as it is" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=relay -- --iroh --relay-url https://relay.example.com --yes
+expect_rc 0
+expect_not_called "cargo"
+expect_not_called "download"
+expect_file_has "$IRDIRH/run.sh" "listen-tcp --host 127.0.0.1:8787 --relay 'https://relay.example.com' --custom-alpn"
+expect_out "your relay server (https://relay.example.com)"
+expect_env_line "COLLIE_PUBLIC_URL=$(ir_url)"
+
+run_case "iroh relay: the option alone means the iroh route" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=relay -- --relay-url=https://relay.example.com:7842 --yes
+expect_rc 0
+expect_file_has "$IRDIRH/run.sh" "--relay 'https://relay.example.com:7842'"
+
+run_case "iroh relay: no dumbpipe yet, it is built from the pinned commit" STUB_OS=Linux STUB_ARCH=x86_64 CARGO=1 -- --iroh --relay-url https://relay.example.com --yes
+expect_rc 0
+expect_called "cargo install --git https://github.com/n0-computer/dumbpipe --rev e2181df077ff --locked --force --root"
+expect_not_called "download"
+expect_file ".config/dogr/iroh/bin/dumbpipe"
+expect_no_file ".local/bin/dumbpipe"
+expect_file_has "$IRDIRH/run.sh" ".config/dogr/iroh/bin/dumbpipe"
+expect_file_has "$IRDIRH/run.sh" "--relay 'https://relay.example.com'"
+
+run_case "iroh relay: a released dumbpipe without the option is passed over" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=1 CARGO=1 -- --iroh --relay-url https://relay.example.com --yes
+expect_rc 0
+expect_called "cargo install"
+expect_file_has "$IRDIRH/run.sh" ".config/dogr/iroh/bin/dumbpipe"
+
+run_case "iroh relay: the build needs cargo" STUB_OS=Linux STUB_ARCH=x86_64 -- --iroh --relay-url https://relay.example.com --yes
+expect_rc 5
+expect_out "needs Rust's cargo"
+expect_not_called "systemctl"
+expect_not_called "collie start"
+
+run_case "iroh relay: a failed build changes nothing else" STUB_OS=Linux STUB_ARCH=x86_64 CARGO=1 STUB_CARGO_FAIL=1 -- --iroh --relay-url https://relay.example.com --yes
+expect_rc 5
+expect_out "could not build dumbpipe"
+expect_not_called "systemctl"
+expect_no_file "$IRDIRH/run.sh"
+
+run_case "iroh relay: the pinned commit can be chosen" STUB_OS=Linux STUB_ARCH=x86_64 CARGO=1 DOGR_DUMBPIPE_GIT=https://example.test/dp.git DOGR_DUMBPIPE_REV=abc123 -- --iroh --relay-url https://relay.example.com --yes
+expect_rc 0
+expect_called "cargo install --git https://example.test/dp.git --rev abc123"
+
+run_case "iroh relay: plain http is fine on the local network" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=relay -- --iroh --relay-url http://192.168.1.20:3340 --yes
+expect_rc 0
+expect_file_has "$IRDIRH/run.sh" "--relay 'http://192.168.1.20:3340'"
+
+run_case "iroh relay: plain http is refused on the internet" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=relay -- --iroh --relay-url http://relay.example.com --yes
+expect_rc 1
+expect_out "plain http is allowed"
+expect_not_called "launchctl"
+
+run_case "iroh relay: another scheme is refused" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=relay -- --iroh --relay-url ftp://relay.example.com --yes
+expect_rc 1
+expect_out "must start with https://"
+
+run_case "iroh relay: a user name is refused" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=relay -- --iroh --relay-url https://me:pw@relay.example.com --yes
+expect_rc 1
+expect_out "user name"
+
+run_case "iroh relay: a query is refused" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=relay -- --iroh --relay-url "https://relay.example.com/?k=v" --yes
+expect_rc 1
+expect_out "query or a fragment"
+
+# shellcheck disable=SC2016  # the $( ) is meant to be passed on as it is, not expanded
+run_case "iroh relay: odd characters are refused" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=relay -- --iroh --relay-url 'https://relay.example.com/$(x)' --yes
+expect_rc 1
+expect_out "does not pass on"
+
+run_case "iroh relay: the option needs a value" STUB_OS=Darwin STUB_ARCH=arm64 -- --iroh --relay-url
+expect_rc 1
+expect_out "--relay-url needs a value"
+
+run_case "iroh relay: it does not mix with another route" STUB_OS=Darwin STUB_ARCH=arm64 -- --tailscale --relay-url https://relay.example.com --yes
+expect_rc 1
+
+run_case "iroh relay: dry run names the build and the relay" STUB_OS=Darwin STUB_ARCH=arm64 CARGO=1 -- --iroh --relay-url https://relay.example.com --dry-run
+expect_rc 0
+expect_out "Build a dumbpipe that can use your own relay server"
+expect_out "relay server https://relay.example.com"
+expect_not_called "cargo"
+expect_not_called "launchctl"
+
+run_case "iroh relay: the relay cannot be reached" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=relay STUB_IR_RELAY_WARN=1 -- --iroh --relay-url https://relay.example.com --yes
+expect_rc 0
+expect_out "could not reach your relay server (https://relay.example.com)"
 
 # What goes into Collie's .env.
 run_case "iroh: another Collie port" STUB_OS=Darwin STUB_ARCH=arm64 IROH_INSTALLED=1 ENVFILE="COLLIE_PORT=9000" -- --iroh --yes

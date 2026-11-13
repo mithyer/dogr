@@ -71,7 +71,13 @@ main() {
     TC_BIN=
     # iroh: the dumbpipe release this script installs (pinned, with its checksums in iroh_release), where its files are, the
     # file and checksum for this computer, the first part of the link the phone is given, the folder of the saved secrets, the
-    # endpoint id and the secret name (ALPN) that make up the address, the service log and the dumbpipe program
+    # endpoint id and the secret name (ALPN) that make up the address, the service log and the dumbpipe program. IR_RELAY is the
+    # relay server asked for with --relay-url (empty: n0's public relays). Only a dumbpipe that has the --relay option can use it, and
+    # no release has that option yet, so one is built from this pinned commit of the dumbpipe repository (IR_GIT, IR_REV) into
+    # IR_DIR/bin when a relay is asked for; the build needs Rust's cargo.
+    IR_RELAY=
+    IR_GIT=${DOGR_DUMBPIPE_GIT:-https://github.com/n0-computer/dumbpipe}
+    IR_REV=${DOGR_DUMBPIPE_REV:-e2181df077ff}
     IR_VERSION=0.40.1
     IR_RELEASE_URL=${DOGR_DUMBPIPE_RELEASE_URL:-https://github.com/n0-computer/dumbpipe/releases/download/v$IR_VERSION}
     IR_FILE=
@@ -248,7 +254,7 @@ WRAPPER
 
     usage() {
         cat <<'EOF'
-Usage: setup.sh [--tailscale | --tailcat [--derpmap-url URL] [--region NAME] | --iroh | --proxy --url URL | --lan [--host ADDRESS]]
+Usage: setup.sh [--tailscale | --tailcat [--derpmap-url URL] [--region NAME] | --iroh [--relay-url URL] | --proxy --url URL | --lan [--host ADDRESS]]
                 [--mux herdr|herdr-core] [--http] [--yes] [--dry-run] [--help]
 
 Puts Collie on this computer, sets it up for the way your phone reaches it, and shows a QR code that pairs your phone.
@@ -267,6 +273,10 @@ Without --tailscale, --tailcat, --iroh, --proxy or --lan the script asks which w
                 the two find a direct path. The script installs dumbpipe, makes a saved secret key and a secret name (so the
                 address then stays the same), runs 'dumbpipe listen-tcp' as a background service of your own user, and puts
                 the secret iroh address into the QR code.
+  --relay-url URL  iroh: the address of a relay server of your own (the open-source 'iroh-relay', or a paid one with its
+                authentication switched off) instead of n0's public relays. https, or http on this computer or the local network.
+                The phone needs the same address. No dumbpipe release has this option yet, so the script builds one from
+                a pinned commit (needs Rust's cargo; a few minutes). Implies --iroh.
   --proxy       Your phone reaches this computer through your own domain, with a reverse proxy you run in front of Collie.
                 Needs --url (or the script asks for it). The script sets Collie up behind the proxy; it does not set up
                 the proxy, its certificate or who may reach it.
@@ -921,11 +931,18 @@ EOF
         "$1" listen-tcp --help 2>&1 </dev/null | grep -q -e '--custom-alpn'
     }
 
+    # dumbpipe_relay_ok PROGRAM: true when that dumbpipe also has the --relay option (a relay server of your own)
+    dumbpipe_relay_ok() {
+        "$1" listen-tcp --help 2>&1 </dev/null | grep -q -e '--relay <'
+    }
+
     # find_dumbpipe: true when a usable dumbpipe is installed; its path is then in IR_BIN. One that is too old is passed over,
     # and the script installs its own into ~/.local/bin and uses that by its full path.
     find_dumbpipe() {
-        for ir_try in "$(command -v dumbpipe 2>/dev/null)" "$HOME/.local/bin/dumbpipe"; do
+        for ir_try in "$(command -v dumbpipe 2>/dev/null)" "$HOME/.local/bin/dumbpipe" "$IR_DIR/bin/dumbpipe"; do
             if [ -n "$ir_try" ] && [ -x "$ir_try" ] && dumbpipe_ok "$ir_try"; then
+                # With a relay asked for, one without the --relay option does not do; the one built here has it.
+                if [ -n "$IR_RELAY" ] && ! dumbpipe_relay_ok "$ir_try"; then continue; fi
                 IR_BIN=$ir_try
                 return 0
             fi
@@ -933,9 +950,34 @@ EOF
         return 1
     }
 
+    # check_iroh_relay: stop (exit 1) unless IR_RELAY is a relay address this script can pass on. https, or http for this computer
+    # and the local network, where a certificate is rarely to be had; no user name, no query, and only characters that are safe to
+    # put into the small script the service runs. The phone needs the same address (the app's command carries it).
+    check_iroh_relay() {
+        [ -n "$IR_RELAY" ] || return 0
+        case $IR_RELAY in
+            https://*) ir_rest=${IR_RELAY#https://} ;;
+            http://*)
+                ir_rest=${IR_RELAY#http://}
+                case ${ir_rest%%[:/]*} in
+                    localhost | 127.* | 10.* | 192.168.* | 172.1[6-9].* | 172.2[0-9].* | 172.3[0-1].* | *.local | ::1) ;;
+                    *) die 1 "plain http is allowed for a relay on this computer or the local network only; use https://: $IR_RELAY" ;;
+                esac
+                ;;
+            *) die 1 "the relay address must start with https://: $IR_RELAY" ;;
+        esac
+        case $ir_rest in
+            '' | [!A-Za-z0-9]*) die 1 "that is not a relay address (it needs a host name): $IR_RELAY" ;;
+            *@*) die 1 "the relay address must not have a user name in it: $IR_RELAY" ;;
+            *[?#]*) die 1 "the relay address must not have a query or a fragment: $IR_RELAY" ;;
+            *[!A-Za-z0-9._~:/+-]*) die 1 "the relay address has characters this script does not pass on to a service file: $IR_RELAY" ;;
+        esac
+    }
+
     # resolve_iroh: the settings this route needs. COLLIE_PUBLIC_URL has to carry the iroh address, which needs the saved key, so
     # that one line is added later (setup_iroh). The phone reaches Collie at 127.0.0.1 on a port of its own, like with tailcat.
     resolve_iroh() {
+        check_iroh_relay
         IR_BASE=http://iroh.invalid
         want COLLIE_SKIP_SERVE 1
         want COLLIE_PUBLIC_HOSTS "127.0.0.1:$PORT"
@@ -977,9 +1019,14 @@ EOF
     plan_iroh() {
         if find_dumbpipe; then
             plan "dumbpipe is already installed ($("$IR_BIN" --version 2>/dev/null </dev/null | head -n 1)); it is left as it is."
+        elif [ -n "$IR_RELAY" ]; then
+            plan "Build a dumbpipe that can use your own relay server: 'cargo install' of $IR_GIT at commit $IR_REV into ~/.config/dogr/iroh/bin (needs Rust's cargo; takes a few minutes). The released dumbpipe has no such option yet."
         else
             iroh_release
             plan "Install dumbpipe $IR_VERSION: download $IR_RELEASE_URL/$IR_FILE, check it against the SHA-256 this script carries, and put the program into ~/.local/bin."
+        fi
+        if [ -n "$IR_RELAY" ]; then
+            plan "Make dumbpipe use the relay server $IR_RELAY instead of n0's public relays (your phone must be given the same address)."
         fi
         if iroh_keys_saved; then
             plan "Use the secret key and the secret name saved in ~/.config/dogr/iroh: the iroh address is the same as last time."
@@ -1010,6 +1057,25 @@ EOF
         chmod +x "$HOME/.local/bin/dumbpipe"
         dumbpipe_ok "$HOME/.local/bin/dumbpipe" || die 5 "dumbpipe was installed but does not run here. Run '$HOME/.local/bin/dumbpipe --version' to see why."
         IR_BIN=$HOME/.local/bin/dumbpipe
+        say "  $("$IR_BIN" --version 2>/dev/null </dev/null | head -n 1)"
+    }
+
+    # build_dumbpipe_relay: build a dumbpipe with the --relay option from the pinned commit into IR_DIR/bin (apart from any dumbpipe
+    # the person has, which stays as it is). Stops (exit 5) when cargo is missing or the build fails.
+    build_dumbpipe_relay() {
+        say ""
+        say "==> Building dumbpipe with relay support (a few minutes the first time)"
+        command -v cargo >/dev/null 2>&1 || die 5 "building dumbpipe needs Rust's cargo, which was not found. Install Rust (https://rustup.rs) and run this command again, or leave out --relay-url to use n0's public relays."
+        (
+            umask 077
+            mkdir -p "$IR_DIR"
+        ) || die 4 "could not make $IR_DIR"
+        cargo install --git "$IR_GIT" --rev "$IR_REV" --locked --force --root "$IR_DIR" dumbpipe </dev/null || die 5 "could not build dumbpipe from $IR_GIT at $IR_REV. Nothing else was changed."
+        [ -x "$IR_DIR/bin/dumbpipe" ] || die 5 "the build gave no $IR_DIR/bin/dumbpipe."
+        if ! dumbpipe_ok "$IR_DIR/bin/dumbpipe" || ! dumbpipe_relay_ok "$IR_DIR/bin/dumbpipe"; then
+            die 5 "the dumbpipe that was built does not have the options this needs. Run '$IR_DIR/bin/dumbpipe listen-tcp --help' to see."
+        fi
+        IR_BIN=$IR_DIR/bin/dumbpipe
         say "  $("$IR_BIN" --version 2>/dev/null </dev/null | head -n 1)"
     }
 
@@ -1055,8 +1121,11 @@ EOF
                 # shellcheck disable=SC2016  # the $(...) is meant to be written, not expanded here
                 printf 'IROH_SECRET=$(head -n 1 %s) || exit 1\n' "$(sq "$IR_DIR/secret")"
                 printf '%s\n' 'export IROH_SECRET'
+                # With a relay of your own the option comes before the secret name; without one the line is the same as ever.
+                ir_relay_opt=
+                if [ -n "$IR_RELAY" ]; then ir_relay_opt=" --relay $(sq "$IR_RELAY")"; fi
                 # shellcheck disable=SC2016
-                printf 'exec %s listen-tcp --host 127.0.0.1:%s --custom-alpn "utf8:$(head -n 1 %s)"\n' "$(sq "$IR_BIN")" "$PORT" "$(sq "$IR_DIR/alpn")"
+                printf 'exec %s listen-tcp --host 127.0.0.1:%s%s --custom-alpn "utf8:$(head -n 1 %s)"\n' "$(sq "$IR_BIN")" "$PORT" "$ir_relay_opt" "$(sq "$IR_DIR/alpn")"
             } >"$IR_RUN"
         ) || die 4 "could not write $IR_RUN"
         chmod 700 "$IR_RUN" || die 4 "could not make $IR_RUN runnable"
@@ -1117,7 +1186,9 @@ EOF
     # setup_iroh: install dumbpipe, save the keys, run the service, check that it runs with the endpoint id the keys give, and
     # add COLLIE_PUBLIC_URL with the address to the settings that apply_settings writes next.
     setup_iroh() {
-        if ! find_dumbpipe; then install_dumbpipe; fi
+        if ! find_dumbpipe; then
+            if [ -n "$IR_RELAY" ]; then build_dumbpipe_relay; else install_dumbpipe; fi
+        fi
         say ""
         say "==> Making sure the iroh keys and service are there"
         make_iroh_keys
@@ -1128,7 +1199,11 @@ EOF
         # dumbpipe holds the port or the name, and the address would lead to the wrong place.
         [ "$(iroh_id_of "$IR_TICKET")" = "$IR_ENDPOINT" ] || die 4 "the running service has another endpoint id than the saved key gives. Is an older dumbpipe still running? ($IR_LOG)"
         if grep -q 'Failed to connect to the home relay' "$IR_LOG" 2>/dev/null; then
-            warn "dumbpipe could not reach its relay server (n0's public relays). Your phone cannot connect until this computer can; check its internet connection and run this command again."
+            if [ -n "$IR_RELAY" ]; then
+                warn "dumbpipe could not reach your relay server ($IR_RELAY). Your phone cannot connect until this computer can; check that the relay runs and can be reached from here, then run this command again."
+            else
+                warn "dumbpipe could not reach its relay server (n0's public relays). Your phone cannot connect until this computer can; check its internet connection and run this command again."
+            fi
         fi
         say "  the service runs; its address is secret and is not shown here (it is in the QR code below)"
         PUBLIC_URL=$IR_BASE/ir$IR_ENDPOINT$IR_ALPN
@@ -1206,6 +1281,19 @@ EOF
             --derpmap-url=*)
                 set_route tailcat
                 DERP_URL=${1#--derpmap-url=}
+                ;;
+            --relay-url)
+                if [ $# -lt 2 ]; then
+                    usage >&2
+                    die 1 "--relay-url needs a value: the address of your iroh relay server"
+                fi
+                set_route iroh
+                IR_RELAY=$2
+                shift
+                ;;
+            --relay-url=*)
+                set_route iroh
+                IR_RELAY=${1#--relay-url=}
                 ;;
             --region)
                 if [ $# -lt 2 ]; then
@@ -1398,8 +1486,14 @@ EOF
         say "settings file ($ENV_FILE, private to you) and in the output of 'collie status'. Do not share a screenshot of any of them."
         say "Its second half is a secret name that dumbpipe takes on its command line, so other users of this computer can see it"
         say "with 'ps'. The saved files are in $IR_DIR, private to you."
-        say "The tunnel goes through n0's public iroh relay servers until your phone and this computer find a direct path. They are"
-        say "free; n0 says they are for development and testing and promises no speed or uptime. The traffic is end-to-end encrypted."
+        if [ -n "$IR_RELAY" ]; then
+            say "The tunnel goes through your relay server ($IR_RELAY) until your phone and this computer find a direct path. The"
+            say "phone must be given the same relay address (the app's command for this computer carries it). The traffic is end-to-end"
+            say "encrypted, so the relay cannot read it. To go back to n0's public relays, run this script again without --relay-url."
+        else
+            say "The tunnel goes through n0's public iroh relay servers until your phone and this computer find a direct path. They are"
+            say "free; n0 says they are for development and testing and promises no speed or uptime. The traffic is end-to-end encrypted."
+        fi
         say ""
     fi
     if [ "$ROUTE" = lan ]; then
