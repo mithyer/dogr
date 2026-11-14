@@ -15,7 +15,10 @@ curl -fsSL https://raw.githubusercontent.com/mithyer/dogr/main/setup.sh | sh
 The script first asks how your phone reaches this computer (see [Routes](#routes)), then says what it is about to do and asks
 once. Then it:
 
-1. installs Collie with Collie's own installer, only if Collie is not installed yet;
+1. installs Collie with Collie's own installer, only if Collie is not installed yet. It installs the **Dogr build of Collie**
+   (a release of [`mithyer/collie`](https://github.com/mithyer/collie), named like `v1.28.1-dogr.1`; see
+   [Which Collie](#which-collie)). A Collie that is already a Dogr build is left as it is; an upstream Collie is switched to
+   the Dogr build in place, and the way back is printed (see [Which Collie](#which-collie));
 2. makes sure the terminal program Collie drives is there and running: **herdr** (the terminal app) or **herdr-core** (a
    background service). One that is missing is installed with its own installer; herdr-core is started with `hc server
    start`; herdr has to be opened by you, and the script says how when it is not;
@@ -167,6 +170,34 @@ Things to know:
 - Every connection the phone opens locally becomes one connection to dumbpipe, so a phone that keeps one HTTP connection open uses one.
 - The Dogr app needs iOS 17.5 or newer for the iroh route (the library's own minimum).
 
+## Which Collie
+
+Dogr uses its own build of [Collie](https://github.com/AltanS/collie), published as releases of
+[`mithyer/collie`](https://github.com/mithyer/collie). The code is Collie's; a Dogr release is a Collie release plus a suffix
+(`v1.28.1-dogr.1` is Collie 1.28.1, first Dogr build) and its own update address, so `collie update` looks for the next Dogr
+build there and never offers an upstream release by mistake. The script pins one tag (`DOGR_COLLIE_TAG`), because a new build is
+used by it only after it has been tested with it.
+
+What the script does with a Collie that is already there:
+
+| Collie on this computer | What happens |
+| --- | --- |
+| none | The pinned Dogr build is installed. |
+| a Dogr build (`...-dogr.N`) | Left as it is. |
+| an upstream release not newer than the pin | **Switched in place**: Collie's installer lays the pinned version beside the old one and points `current` at it; Collie is restarted at the end; the line that goes back is printed. |
+| an upstream release newer than the pin | Left as it is (switching would be a downgrade). |
+| a version it cannot read | Left as it is. |
+| the switch fails (no network, a git checkout, ...) | A warning, then the setup goes on with the Collie that is there. |
+
+The way back, as printed by the script (the old version in place of `<old>`):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/AltanS/collie/v<old>/scripts/install.sh | COLLIE_UPDATE_REPO=AltanS/collie COLLIE_TAG=v<old> sh
+collie restart
+```
+
+To follow upstream releases again afterwards, keep `COLLIE_UPDATE_REPO=AltanS/collie` in `~/.config/collie/.env`.
+
 ## Options
 
 Options go after `-s --` when the script comes through a pipe:
@@ -195,8 +226,9 @@ curl -fsSL https://raw.githubusercontent.com/mithyer/dogr/main/setup.sh | sh -s 
 
 | Environment variable | Meaning |
 | --- | --- |
-| `DOGR_COLLIE_TAG` | Install this Collie release (for example `v1.27.0`) instead of the newest. |
-| `DOGR_COLLIE_INSTALL_URL` | Where Collie's installer comes from. Default `https://colliepwa.dev/install.sh`. |
+| `DOGR_COLLIE_REPO` | The GitHub repository the Dogr build of Collie comes from. Default `mithyer/collie`. |
+| `DOGR_COLLIE_TAG` | The Collie release to install. Default `v1.28.1-dogr.1`, the one this script was tested with (never "the newest"). |
+| `DOGR_COLLIE_INSTALL_URL` | Where Collie's installer comes from. Default: `scripts/install.sh` of that repository at that tag (`https://raw.githubusercontent.com/<repo>/<tag>/scripts/install.sh`). |
 | `DOGR_HERDR_INSTALL_URL`, `DOGR_HERDR_CORE_INSTALL_URL` | Where the installers of herdr and herdr-core come from. Defaults `https://herdr.dev/install.sh` and `https://releases.herdr.dev/core/install.sh`. |
 | `DOGR_TAILCAT_VERSION`, `DOGR_TAILCAT_RELEASE_URL` | Linux: which tailcat release to download (default `0.7.0`) and where its files are (default `https://github.com/tailscale/tailcat/releases/download/v<version>`). On macOS Homebrew decides the version. |
 | `DOGR_DUMBPIPE_GIT`, `DOGR_DUMBPIPE_REV` | `--iroh --relay-url`: the git repository and the commit that dumbpipe is built from (default `https://github.com/n0-computer/dumbpipe` at `e2181df077ff`). |
@@ -223,7 +255,7 @@ Only what Collie's own commands change:
 
 | What | Where |
 | --- | --- |
-| Collie's program files | `~/.local/share/collie` (or `$COLLIE_DIR`), and a `collie` link in `~/.local/bin` |
+| Collie's program files (the Dogr build; an upstream Collie that was there gets the Dogr build beside it) | `~/.local/share/collie` (or `$COLLIE_DIR`), and a `collie` link in `~/.local/bin` |
 | herdr or herdr-core, only when missing | Each installer's own place: `~/.local/bin` (no `sudo`). herdr-core also keeps its program under `~/.local/share/herdr-core`. |
 | A running herdr-core | `hc server start` starts the core in the background. It stays running until you stop it (`hc server stop`). |
 | One line, only when Collie's `.env` names the other terminal program | `COLLIE_MUX=` in `~/.config/collie/.env` is replaced where it stands, and Collie is restarted. The plan names the change before you agree. |
@@ -294,7 +326,7 @@ sh tests/run.sh
 ```
 
 The tests run `setup.sh` against a stub `curl`, `collie`, `hc`, `herdr`, `ifconfig`, `ip`, `uname`, `brew`, `tailcat`, `dumbpipe`, `launchctl` and `systemctl`, each case in its own empty home folder. They cover the
-normal path, running twice, `--dry-run`, installing first, a failed download or installer, Collie naming a missing setup step,
+normal path, running twice, `--dry-run`, installing first, switching an upstream Collie to the Dogr build (done, dry run, a newer Collie, an unreadable version, a failed download or installer, an installer that changes nothing), a failed download or installer, Collie naming a missing setup step,
 no Tailscale address, Collie not answering, the Tailscale address not answering from this computer, a failed start, a QR
 code that could not be drawn, a tailnet without HTTPS certificates (agreed, declined, `--http`, an existing `.env`, a setting
 Collie does not pick up), the terminal program (named, asked for, installed, not running, a failing installer or start, an
@@ -327,6 +359,8 @@ the Tailscale route refusing leftovers, answering at the terminal, no terminal, 
 | `--relay-url`: a dumbpipe built from the pinned commit (`e2181df077ff`) listens with `--relay http://127.0.0.1:3340` in front of a scripted Collie stand-in; the Dogr app (iPhone simulator, relay address in its Add form) pairs, shows the machine online and its spaces; with the relay stopped and the app reopened the machine is offline, and online again after the relay and this computer's endpoint came back | Run on the author's Mac with a throw-away `iroh-relay --dev` (http, local only), a scratch folder and no real Collie or service; both ends were on one Mac |
 | The real installers of herdr and herdr-core, and a real `herdr status server` text when it is not running | Not yet (the tests use stubs; the "not running" wording was read from a real Herdr) |
 | The progress line, drawn by the real `curl` against the real Collie release on GitHub (`2.0 / 47.1 MB  (4%)  0.3 MB/s`, then curl's own timeout message and exit code 28 passed through, no leftover files) | Run on the author's Mac with `DOGR_PROGRESS=always` and an 8-second limit. Not yet seen in a real terminal window with Collie's own installer. |
+| The Dogr build installs: Collie's own installer, pinned to the real release `v1.28.1-dogr.1` of `mithyer/collie`, into an empty home folder; `collie version` says `1.28.1-dogr.1+...`, `collie doctor` names `github.com/mithyer/collie` as the update source, and `collie update --check` finds nothing newer | Run on the author's Mac, 2026-11-14 |
+| Switching a real upstream Collie to the Dogr build in place (the real installer beside the old version, the restart, the way back), the Dogr build on Linux, and a second Dogr tag offered as an update by `collie update` | Not yet. The tests use stubs; the installer's rule for a pin over an existing install was read from its source, and the update rule was run against Collie's own functions with made-up tags. |
 | A real `collie start` with a real Tailscale, with or without HTTPS certificates | Not yet |
 | A real `collie start` for `--proxy` or `--lan` (the service reading the `.env` lines), a real Caddy in front, a phone behind it | Not yet. The service reading the `.env` is only inferred from the `status` check above. |
 | The Linux service file under a real `systemd --user`, `loginctl enable-linger`, and `brew install tailcat` run by the script on a Mac that had no tailcat | Not yet (the tests use stubs; the unit file follows systemd's documented format) |

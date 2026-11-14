@@ -92,7 +92,12 @@ cat >"$STUBS/collie" <<'EOF'
 #!/bin/sh
 echo "collie $* [mux=${COLLIE_MUX:-none}]" >>"$STUB_LOG"
 case $1 in
-    version) echo "collie 1.27.0" ;;
+    version)
+        # What the installed program says: the version the (stub) installer laid down last, else STUB_COLLIE_VERSION, else a Dogr
+        # build (so the cases that are not about the switch see a Collie that is left as it is). The real one prints "<version>+<build>".
+        v=$(cat "$HOME/.collie-version" 2>/dev/null || echo "${STUB_COLLIE_VERSION:-1.28.1-dogr.1}")
+        echo "$v+6ebde723db"
+        ;;
     start | restart)
         [ "${STUB_START_RC:-0}" = 0 ] || { echo "start went wrong"; exit "$STUB_START_RC"; }
         echo "  ✓ Collie is running · v1.27.0"
@@ -145,7 +150,9 @@ cat >"$STUBS/installer.sh" <<'EOF'
 #!/bin/sh
 cat >/dev/null
 [ "${STUB_INSTALLER_FAIL:-0}" = 1 ] && { echo "installer broke"; exit 1; }
-echo "installer ran tag=${COLLIE_TAG:-none}" >>"$STUB_LOG"
+echo "installer ran tag=${COLLIE_TAG:-none} repo=${COLLIE_UPDATE_REPO:-none}" >>"$STUB_LOG"
+# A pinned tag is the version the program says afterwards (STUB_INSTALLER_KEEP_VERSION=1: an installer that changes nothing).
+if [ -n "${COLLIE_TAG:-}" ] && [ "${STUB_INSTALLER_KEEP_VERSION:-0}" != 1 ]; then echo "${COLLIE_TAG#v}" >"$HOME/.collie-version"; fi
 case ${STUB_INSTALLER_BIG:-0} in
     1) curl -fsSL -o "$HOME/big.bin" https://example.test/big.bin || exit 1 ;;
     2) curl -fsSL --retry 3 https://example.test/big.bin -o "$HOME/big.bin" || exit 1 ;;
@@ -656,22 +663,92 @@ expect_not_called "collie pair"
 # The same, on a computer that has no Collie: nothing is downloaded either.
 run_case "dry run without collie" COLLIE_INSTALLED=0 -- --tailscale --dry-run
 expect_rc 0
-expect_out "Install Collie"
+expect_out "Install the Dogr build of Collie"
 expect_not_called "download"
 
 # Without Collie: the installer is fetched to a file, run, and the rest follows.
 run_case "install first" COLLIE_INSTALLED=0 -- --tailscale --yes
 expect_rc 0
-expect_called "download https://colliepwa.dev/install.sh"
-expect_called "installer ran"
+expect_called "download https://raw.githubusercontent.com/mithyer/collie/v1.28.1-dogr.1/scripts/install.sh"
+expect_called "installer ran tag=v1.28.1-dogr.1 repo=mithyer/collie"
 expect_order "installer ran" "collie start"
 expect_called "collie pair"
+expect_out "Install the Dogr build of Collie (v1.28.1-dogr.1 from mithyer/collie)"
+expect_not_called "colliepwa"
 
 # The release can be pinned and the installer address replaced.
 run_case "pinned tag and address" COLLIE_INSTALLED=0 DOGR_COLLIE_TAG=v1.27.0 DOGR_COLLIE_INSTALL_URL=https://example.test/i.sh -- --tailscale --yes
 expect_rc 0
 expect_called "download https://example.test/i.sh"
-expect_called "installer ran tag=v1.27.0"
+expect_called "installer ran tag=v1.27.0 repo=mithyer/collie"
+
+# The repository the Dogr build comes from can be replaced; the download address follows it.
+run_case "other repository" COLLIE_INSTALLED=0 DOGR_COLLIE_REPO=someone/collie -- --tailscale --yes
+expect_rc 0
+expect_called "download https://raw.githubusercontent.com/someone/collie/v1.28.1-dogr.1/scripts/install.sh"
+expect_called "installer ran tag=v1.28.1-dogr.1 repo=someone/collie"
+
+# A Collie that is already a Dogr build is left as it is, even when the pin is another one.
+run_case "dogr build is left alone" STUB_COLLIE_VERSION=1.28.0-dogr.2 -- --tailscale --yes
+expect_rc 0
+expect_out "Collie is already installed (1.28.0-dogr.2, a Dogr build); it is left as it is."
+expect_not_called "installer ran"
+expect_not_called "collie restart"
+
+# An upstream Collie that is not newer than the pin is switched in place, restarted, and the way back is printed.
+run_case "switch from upstream" STUB_COLLIE_VERSION=1.27.0 -- --tailscale --yes
+expect_rc 0
+expect_out "Collie 1.27.0 is installed. It is switched to the Dogr build of Collie (v1.28.1-dogr.1 from mithyer/collie)"
+expect_out "==> Switching Collie to the Dogr build"
+expect_called "download https://raw.githubusercontent.com/mithyer/collie/v1.28.1-dogr.1/scripts/install.sh"
+expect_called "installer ran tag=v1.28.1-dogr.1 repo=mithyer/collie"
+expect_out "Collie is now 1.28.1-dogr.1"
+expect_out "COLLIE_UPDATE_REPO=AltanS/collie COLLIE_TAG=v1.27.0 sh"
+expect_out "==> Restarting Collie so the Dogr build runs"
+expect_order "installer ran" "collie restart"
+expect_called "collie pair"
+
+# A dry run says it, and changes nothing.
+run_case "switch dry run" STUB_COLLIE_VERSION=1.27.0 -- --tailscale --dry-run
+expect_rc 0
+expect_out "It is switched to the Dogr build of Collie"
+expect_out "Dry run: nothing was changed."
+expect_not_called "download"
+expect_not_called "installer ran"
+
+# An upstream Collie that is newer than the pin is never replaced by an older build.
+run_case "newer upstream is left alone" STUB_COLLIE_VERSION=1.29.0 -- --tailscale --yes
+expect_rc 0
+expect_out "Collie 1.29.0 is already installed. It is newer than the Dogr build (v1.28.1-dogr.1), so it is left as it is."
+expect_not_called "installer ran"
+expect_not_called "collie restart"
+
+# A version that cannot be read is left as it is.
+run_case "unreadable version is left alone" STUB_COLLIE_VERSION=unknown -- --tailscale --yes
+expect_rc 0
+expect_out "left as it is"
+expect_not_called "installer ran"
+
+# A switch that fails is a warning, not the end: the old Collie stays and the rest of the setup goes on with it.
+run_case "switch: download fails" STUB_COLLIE_VERSION=1.27.0 STUB_DOWNLOAD=bad -- --tailscale --yes
+expect_rc 0
+expect_out "could not switch Collie to the Dogr build"
+expect_out "Collie 1.27.0 stays as it was"
+expect_not_called "installer ran"
+expect_called "collie start"
+expect_not_called "collie restart"
+
+run_case "switch: installer fails" STUB_COLLIE_VERSION=1.27.0 STUB_INSTALLER_FAIL=1 -- --tailscale --yes
+expect_rc 0
+expect_out "could not switch Collie to the Dogr build"
+expect_called "collie start"
+expect_not_called "collie restart"
+
+# An installer that succeeds but leaves the old version in place is noticed.
+run_case "switch: nothing changed" STUB_COLLIE_VERSION=1.27.0 STUB_INSTALLER_KEEP_VERSION=1 -- --tailscale --yes
+expect_rc 0
+expect_out "after the switch, so it stays as it was"
+expect_not_called "collie restart"
 
 # A failing download stops before anything runs.
 run_case "download fails" COLLIE_INSTALLED=0 STUB_DOWNLOAD=bad -- --tailscale --yes

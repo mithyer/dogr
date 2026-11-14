@@ -28,8 +28,9 @@
 #             4 Collie did not start or does not answer | 5 something could not be installed | 6 stopped by you
 #
 # Environment (all optional):
-#   DOGR_COLLIE_TAG           install this Collie release (for example v1.27.0) instead of the newest
-#   DOGR_COLLIE_INSTALL_URL   where Collie's installer comes from (default https://colliepwa.dev/install.sh)
+#   DOGR_COLLIE_REPO          the GitHub repository Collie's Dogr build comes from (default mithyer/collie)
+#   DOGR_COLLIE_TAG           the Collie release to install (default v1.28.1-dogr.1, the one this script was tested with)
+#   DOGR_COLLIE_INSTALL_URL   where Collie's installer comes from (default: scripts/install.sh of that repository at that tag)
 #   DOGR_HERDR_INSTALL_URL    where herdr's installer comes from (default https://herdr.dev/install.sh)
 #   DOGR_HERDR_CORE_INSTALL_URL   where herdr-core's installer comes from (default https://releases.herdr.dev/core/install.sh)
 #   DOGR_TAILCAT_VERSION      the tailcat release to download on Linux (default 0.7.0); macOS takes what Homebrew has
@@ -45,7 +46,11 @@ main() {
     set -u
 
     # ---- settings -------------------------------------------------------------------------------------------------
-    INSTALL_URL=${DOGR_COLLIE_INSTALL_URL:-https://colliepwa.dev/install.sh}
+    # Collie is installed from the Dogr build of Collie: a release of its own repository, named vX.Y.Z-dogr.N. One tag is
+    # pinned on purpose (never "the newest"): a new build is used by this script only after it has been tested with it.
+    COLLIE_REPO=${DOGR_COLLIE_REPO:-mithyer/collie}
+    COLLIE_PIN=${DOGR_COLLIE_TAG:-v1.28.1-dogr.1}
+    INSTALL_URL=${DOGR_COLLIE_INSTALL_URL:-https://raw.githubusercontent.com/$COLLIE_REPO/$COLLIE_PIN/scripts/install.sh}
     TTY=${DOGR_TTY:-/dev/tty}
     TRIES=${DOGR_TRIES:-20}
     DELAY=${DOGR_POLL_DELAY:-1}
@@ -98,6 +103,12 @@ main() {
     ENV_NOTED=0
     # 1 when Collie was installed before this run, so it may already run with the old settings
     WAS_INSTALLED=0
+    # 1 when the installed Collie is an upstream release that this run switches to the Dogr build (decided when the plan is made)
+    SWITCH=0
+    # 1 once that switch has worked: the running Collie is still the old program until it is restarted
+    COLLIE_SWITCHED=0
+    # the version an upstream Collie had before the switch, for the line that says how to go back
+    OLD_VERSION=
     # the terminal program Collie drives: herdr or herdr-core; empty until --mux, the one that is installed, or an answer
     MUX=
     # the command that runs herdr-core: hc, or herdr-core when only that name exists
@@ -235,21 +246,32 @@ WRAPPER
             curl -fsSL "$1" -o "$2"
         fi
     }
-    # run_installer SCRIPT [COLLIE_TAG]: run a downloaded installer with the progress curl in front of the real one. It must not
-    # read our standard input: when this script itself comes through a pipe, it would eat it.
+    # run_installer SCRIPT [TAG [REPO]]: run a downloaded installer with the progress curl in front of the real one. TAG and REPO
+    # are the two settings Collie's installer reads (COLLIE_TAG and COLLIE_UPDATE_REPO); an empty one means "its default", so
+    # the installers of herdr and herdr-core, which get neither, are unaffected. It must not read our standard input: when
+    # this script itself comes through a pipe, it would eat it.
     run_installer() {
         # `env` sets the variables for the installer alone, so nothing leaks into the rest of this script.
         if [ "$WRAP_OK" = 1 ]; then
-            if [ -n "${2:-}" ]; then
-                env DOGR_REAL_CURL="$REAL_CURL" DOGR_WORK="$WORK" PATH="$WORK/bin:$PATH" COLLIE_TAG="$2" sh "$1" </dev/null
-            else
-                env DOGR_REAL_CURL="$REAL_CURL" DOGR_WORK="$WORK" PATH="$WORK/bin:$PATH" sh "$1" </dev/null
-            fi
-        elif [ -n "${2:-}" ]; then
-            env COLLIE_TAG="$2" sh "$1" </dev/null
+            env DOGR_REAL_CURL="$REAL_CURL" DOGR_WORK="$WORK" PATH="$WORK/bin:$PATH" COLLIE_TAG="${2:-}" COLLIE_UPDATE_REPO="${3:-}" sh "$1" </dev/null
         else
-            sh "$1" </dev/null
+            env COLLIE_TAG="${2:-}" COLLIE_UPDATE_REPO="${3:-}" sh "$1" </dev/null
         fi
+    }
+
+    # version_of LINE: the version in the first line `collie version` printed ("1.28.1-dogr.1+6ebde723db", or with a word in
+    # front), without the build id after the "+"; nothing when there is no version in it.
+    version_of() {
+        printf '%s' "$1" | sed -n 's/^[^0-9]*\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\(-[0-9A-Za-z.][0-9A-Za-z.]*\)\{0,1\}\).*/\1/p'
+    }
+
+    # base_newer A B: true when the x.y.z of version A is higher than the x.y.z of version B (the part after "-" is ignored)
+    base_newer() {
+        awk -v a="${1%%-*}" -v b="${2%%-*}" 'BEGIN {
+            split(a, x, "."); split(b, y, ".")
+            for (i = 1; i <= 3; i++) { if (x[i] + 0 > y[i] + 0) exit 0; if (x[i] + 0 < y[i] + 0) exit 1 }
+            exit 1
+        }'
     }
 
     usage() {
@@ -1427,9 +1449,28 @@ EOF
     if find_collie; then
         WAS_INSTALLED=1
         installed=$(collie version 2>/dev/null </dev/null | head -n 1)
-        install_line="Collie is already installed (${installed:-version unknown}); it is left as it is."
+        OLD_VERSION=$(version_of "$installed")
+        pin_version=${COLLIE_PIN#v}
+        if [ -z "$OLD_VERSION" ]; then
+            install_line="Collie is already installed (${installed:-version unknown}); it is left as it is."
+        else
+            case $OLD_VERSION in
+                *-dogr.*)
+                    install_line="Collie is already installed ($OLD_VERSION, a Dogr build); it is left as it is."
+                    ;;
+                *)
+                    if base_newer "$OLD_VERSION" "$pin_version"; then
+                        # Switching would be a downgrade, and a newer Collie may have changed its settings files.
+                        install_line="Collie $OLD_VERSION is already installed. It is newer than the Dogr build ($COLLIE_PIN), so it is left as it is."
+                    else
+                        SWITCH=1
+                        install_line="Collie $OLD_VERSION is installed. It is switched to the Dogr build of Collie ($COLLIE_PIN from $COLLIE_REPO); the old version stays beside it, and the way back is printed."
+                    fi
+                    ;;
+            esac
+        fi
     else
-        install_line="Install Collie into ${COLLIE_DIR:-~/.local/share/collie} with Collie's own installer (${INSTALL_URL})."
+        install_line="Install the Dogr build of Collie ($COLLIE_PIN from $COLLIE_REPO) into ${COLLIE_DIR:-~/.local/share/collie} with Collie's own installer (${INSTALL_URL})."
     fi
     say "This will:"
     plan "$install_line"
@@ -1513,15 +1554,37 @@ EOF
         exit 6
     }
 
-    # Step 1: install Collie when it is missing.
+    # Step 1: install Collie when it is missing, or switch an upstream Collie to the Dogr build.
     if ! find_collie; then
         say ""
         say "==> Installing Collie"
         # Download first, run second: with a pipe, a failed download would hand the shell an empty script and look like success.
         script=$WORK/collie-install.sh
         fetch "$INSTALL_URL" "$script" || die 5 "could not download Collie's installer from $INSTALL_URL"
-        run_installer "$script" "${DOGR_COLLIE_TAG:-}" || die 5 "Collie's installer failed. Its output is above."
+        run_installer "$script" "$COLLIE_PIN" "$COLLIE_REPO" || die 5 "Collie's installer failed. Its output is above."
         find_collie || die 5 "Collie was installed but the 'collie' command was not found. Add ~/.local/bin to your PATH and run this again."
+    elif [ "$SWITCH" = 1 ]; then
+        say ""
+        say "==> Switching Collie to the Dogr build"
+        script=$WORK/collie-install.sh
+        # A pinned tag makes Collie's installer lay the new version down beside the old one and point "current" at it, so a failure
+        # here leaves the old Collie as it was. It is never fatal: the app also works with the Collie that is already here.
+        if fetch "$INSTALL_URL" "$script" && run_installer "$script" "$COLLIE_PIN" "$COLLIE_REPO"; then
+            now=$(version_of "$(collie version 2>/dev/null </dev/null | head -n 1)")
+            case $now in
+                *-dogr.*)
+                    COLLIE_SWITCHED=1
+                    say "  Collie is now $now"
+                    say "  To go back to what you had, run:"
+                    say "    curl -fsSL https://raw.githubusercontent.com/AltanS/collie/v$OLD_VERSION/scripts/install.sh | COLLIE_UPDATE_REPO=AltanS/collie COLLIE_TAG=v$OLD_VERSION sh"
+                    ;;
+                *)
+                    warn "Collie still says ${now:-no version} after the switch, so it stays as it was."
+                    ;;
+            esac
+        else
+            warn "could not switch Collie to the Dogr build (the output above says why). Collie $OLD_VERSION stays as it was; the rest of the setup goes on with it."
+        fi
     fi
 
     # Step 2: the terminal program Collie drives: install it when it is missing, then make sure it runs.
@@ -1578,10 +1641,15 @@ EOF
     rcfile=$WORK/start.rc
     run_collie start
     # A running Collie may have started before a setting changed, so it is restarted to read it. A Collie that this run
-    # installed was never running, so its first start has read everything.
-    if [ "$ENV_CHANGED" = 1 ] || { [ "$ENV_TOUCHED" = 1 ] && [ "$WAS_INSTALLED" = 1 ]; }; then
+    # installed was never running, so its first start has read everything. A Collie that was switched to the Dogr build is
+    # still running as the old program until it is restarted.
+    if [ "$ENV_CHANGED" = 1 ] || [ "$COLLIE_SWITCHED" = 1 ] || { [ "$ENV_TOUCHED" = 1 ] && [ "$WAS_INSTALLED" = 1 ]; }; then
         say ""
-        say "==> Restarting Collie so it reads the changed settings"
+        if [ "$COLLIE_SWITCHED" = 1 ]; then
+            say "==> Restarting Collie so the Dogr build runs"
+        else
+            say "==> Restarting Collie so it reads the changed settings"
+        fi
         run_collie restart
     fi
     # One finding has a way out that this script can take: a tailnet without HTTPS certificates. Any other finding, or this one
