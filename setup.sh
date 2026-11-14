@@ -1697,7 +1697,7 @@ EOF
     fi
     minutes=$(sed -n 's/.*(\([0-9][0-9]*\) minutes).*/\1/p' "$pair_log" | head -n 1)
     say ""
-    say "On your phone: open Herdogr, tap +, then 'Scan QR code' and point the camera at the code above."
+    say "On your phone: open Dogr, tap +, then 'Scan QR code' and point the camera at the code above."
     say "No camera? Paste the link above into the Address field, or type the address and the code."
     say "The code works once and for ${minutes:-a few} minutes. For a new one, run: collie pair"
     if [ "$SWITCHED" = 1 ]; then

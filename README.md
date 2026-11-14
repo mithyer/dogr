@@ -1,7 +1,7 @@
 # dogr
 
 One command that puts [Collie](https://github.com/AltanS/collie) on your computer and pairs your phone with it, for the
-[Herdogr](https://github.com/mithyer/herdogr) iOS app.
+Dogr iOS app.
 
 It does not replace Collie and it does not edit your files. It calls Collie's own commands, checks that each step worked, and
 stops with a clear message when something on your side (Tailscale, mostly) still needs doing.
@@ -29,10 +29,10 @@ once. Then it:
 5. runs `collie pair` last, so the one-time code still has all of its ten minutes left, and shows it as a QR code.
 
 Which terminal program? `--mux herdr` or `--mux herdr-core` decides. Without it the script asks, and marks the one that is
-already installed; with no terminal to ask on it stops and tells you to add `--mux`. The Herdogr app shows the same choice next
+already installed; with no terminal to ask on it stops and tells you to add `--mux`. The Dogr app shows the same choice next
 to the command, so the command you copy already has it.
 
-On your phone: open Herdogr, tap `+`, tap **Scan QR code**, and point the camera at the code. The scan only fills in the form;
+On your phone: open Dogr, tap `+`, tap **Scan QR code**, and point the camera at the code. The scan only fills in the form;
 you still tap **Pair and add** yourself.
 
 It is safe to run again. A step that is already done is skipped, and Collie is never installed twice. Run it again whenever you
@@ -63,7 +63,7 @@ lines to delete.
 Collie then answers to everything on your local network, over plain http. From Collie's source, every API request other than the
 health check and the pairing needs the key that pairing hands out, and pairing needs the one-time code (ten minutes, five tries).
 That is a lock, not encryption: do not use this route on a shared or public network. A real Collie, bound the same way in an empty
-home folder, answered `device not paired` to unpaired requests on the routes tried and paired with the Herdogr app on a simulator.
+home folder, answered `device not paired` to unpaired requests on the routes tried and paired with the Dogr app on a simulator.
 
 ### The tailcat route
 
@@ -76,7 +76,8 @@ What the script sets up:
 1. **tailcat itself.** On macOS with Homebrew (`brew install tailcat`; the releases have no Mac file). On Linux the release file for
    your processor (amd64, arm64, armv7) is downloaded from GitHub, checked against the release's `checksums.txt`, and the
    program goes into `~/.local/bin`.
-2. **A saved key** named `herdogr` (`tailcat genkey --key=herdogr --fixed-region`). The relay region is baked into the key, so the
+2. **A saved key** named `herdogr` (`tailcat genkey --key=herdogr --fixed-region`; the name is an old one, kept so that a key made by
+   an earlier run, and the address baked into it, stay the same). The relay region is baked into the key, so the
    address is the same after every restart. If picking the nearest region fails (it sometimes does), it is tried three times and
    then the script asks you to run it again with `--region NAME` (`tailcat genkey --region=list` shows the names). An existing key
    is kept as it is.
@@ -86,7 +87,7 @@ What the script sets up:
    servers, `loginctl enable-linger $USER` once keeps it running when nobody is logged in).
 4. **Collie's settings** in `~/.config/collie/.env`: `COLLIE_SKIP_SERVE=1`, `COLLIE_PUBLIC_HOSTS=127.0.0.1:<port>` and
    `COLLIE_PUBLIC_URL=http://tailcat.invalid/<tailcat address>`. That last line is how `collie pair` puts the address into its QR code:
-   the link is `http://tailcat.invalid/<address>/settings?pair=<code>`. The host name never resolves; the Herdogr app recognises it and
+   the link is `http://tailcat.invalid/<address>/settings?pair=<code>`. The host name never resolves; the Dogr app recognises it and
    opens the tunnel instead (it asks first if you chose another way of connecting).
 
 `--derpmap-url https://relay.example.com/map.json` uses your own relay map instead of tailcat's public one (both for the key and for
@@ -103,7 +104,7 @@ Things to know:
 - tailcat says of itself that it is early and experimental, makes no promise about its command line or wire format, and that its
   public relays are rate-limited and may be switched off. If you depend on this, run your own relay (`--derpmap-url`).
 - The first request through a new tunnel took 4 to 8 seconds in tests; over a relay on mobile data every request took about 0.6 to 2
-  seconds. The Herdogr app slows its polling down by itself when requests are slow.
+  seconds. The Dogr app slows its polling down by itself when requests are slow.
 - The phone's tunnel library is built from a tailcat commit a little newer than the 0.7.0 release the script installs. A 0.7.0 server and
   that client talked to each other in a test; a later tailcat release may not.
 
@@ -111,7 +112,7 @@ Things to know:
 
 [iroh](https://github.com/n0-computer/iroh) is a library from n0 that connects two devices by a public key and finds a direct path
 between them, or goes through n0's relay servers when it cannot. [dumbpipe](https://github.com/n0-computer/dumbpipe) is n0's small
-program that hands one TCP port of this computer to such a connection. The Herdogr app links the same library and opens the other
+program that hands one TCP port of this computer to such a connection. The Dogr app links the same library and opens the other
 end, so the route needs no account, no server of yours and no open port, and is separate from tailcat: a phone uses one or the other
 per computer, and the two can run side by side.
 
@@ -132,7 +133,7 @@ What the script sets up:
    endpoint id) the service prints; it is checked against the key's own id, so an old log is never trusted.
 4. **Collie's settings** in `~/.config/collie/.env`: `COLLIE_SKIP_SERVE=1`, `COLLIE_PUBLIC_HOSTS=127.0.0.1:<port>` and
    `COLLIE_PUBLIC_URL=http://iroh.invalid/ir<endpoint id><name>`. That last line is how `collie pair` puts the address into its QR code;
-   the host name never resolves, and the Herdogr app recognises it and opens the tunnel instead.
+   the host name never resolves, and the Dogr app recognises it and opens the tunnel instead.
 
 **The iroh address is a secret**, like the tailcat one: the endpoint id plus the name. The script never prints it (the QR code shows it,
 and so do `collie status` and `collie doctor`), and the plan shows `<your iroh address>`.
@@ -143,13 +144,13 @@ A relay is the server both ends fall back on when they cannot find a direct path
 must use the same one**. By default that is n0's public relays. `--relay-url https://relay.example.com` makes this computer use a relay
 of yours instead: the open-source [`iroh-relay`](https://github.com/n0-computer/iroh/tree/main/iroh-relay) that you run yourself, or a
 paid relay of n0's with its authentication switched off. A relay that asks for a token made from a project API key is not supported:
-this script and the Herdogr app only take an address, never a key.
+this script and the Dogr app only take an address, never a key.
 
 - dumbpipe 0.40.1 has no relay option, so with `--relay-url` the script builds one with `cargo install --git` from a pinned commit of
   dumbpipe's `ramfox/relay-flag` branch (not released yet) into `~/.config/dogr/iroh/bin`, and the service runs
   `dumbpipe listen-tcp ... --relay '<url>' --custom-alpn ...`. **Rust's `cargo` must be installed** (the script stops with exit code 5
   and says so when it is not); the first build takes a few minutes. Without `--relay-url` nothing changes: the release file is used.
-- The address has to be given to the phone as well: the Herdogr app has a relay field next to the command and puts the same address into
+- The address has to be given to the phone as well: the Dogr app has a relay field next to the command and puts the same address into
   the tunnel it opens on the phone. With a relay of your own the phone does not ask n0's directory for this computer's relay, so the
   relay has to be in the address it dials.
 - If this computer cannot reach the relay, the script says so after starting the service; the phone cannot connect either until it can.
@@ -164,7 +165,7 @@ Things to know:
 - The name is on the command line of the service, so another user of the same computer can read it with `ps`. The key is not (it is
   passed through the environment of a script only you can read). Use this route on a computer you share only with people you trust.
 - Every connection the phone opens locally becomes one connection to dumbpipe, so a phone that keeps one HTTP connection open uses one.
-- The Herdogr app needs iOS 17.5 or newer for the iroh route (the library's own minimum).
+- The Dogr app needs iOS 17.5 or newer for the iroh route (the library's own minimum).
 
 ## Options
 
@@ -179,7 +180,7 @@ curl -fsSL https://raw.githubusercontent.com/mithyer/dogr/main/setup.sh | sh -s 
 | `--tailscale` | The phone reaches this computer through Tailscale. Answers the first question for you. |
 | `--tailcat` | The phone reaches it through a tailcat tunnel. |
 | `--iroh` | The phone reaches it through an iroh tunnel (dumbpipe). |
-| `--relay-url URL` | iroh: use a relay server of your own (`https://`, or `http://` on this computer or the local network; a host name, no user name, no query or fragment) instead of n0's public relays. Implies `--iroh`. The phone must be given the same address; the Herdogr app puts it into this command from its own field. Needs Rust's `cargo`, see [your own relay](#your-own-relay). |
+| `--relay-url URL` | iroh: use a relay server of your own (`https://`, or `http://` on this computer or the local network; a host name, no user name, no query or fragment) instead of n0's public relays. Implies `--iroh`. The phone must be given the same address; the Dogr app puts it into this command from its own field. Needs Rust's `cargo`, see [your own relay](#your-own-relay). |
 | `--derpmap-url https://relay.example.com/map.json` | tailcat: your own relay map (`https://`, a host name, no user name, and only letters, digits and `. _ ~ : / ? = & # + , -`). Used for the key and the service. Implies `--tailcat`. |
 | `--region NAME` | tailcat: the relay region for a new key (an ID, code or name from `tailcat genkey --region=list`, or the host name of your own relay). Implies `--tailcat`. |
 | `--proxy` | The phone reaches it through your own domain and a reverse proxy. |
@@ -313,7 +314,7 @@ the Tailscale route refusing leftovers, answering at the terminal, no terminal, 
 | That `COLLIE_SERVE_MODE=http` in `~/.config/collie/.env` turns the address from `https://name` into `http://name:8787` | Real `collie status --json` in an empty home folder |
 | The script runs on macOS 15 (Intel) over ssh: `--help`, `--dry-run`, no terminal, unknown option, "no" at the route question, "no" at the confirmation. Each exits with the documented code and changes nothing | Run once on a spare Mac, 2026-11-10 |
 | That the proxy and local-network settings make Collie report the address the phone should use (and, for `--lan`, the bind address as its local address) | Real `collie status --json` in an empty home folder, with the lines written to `~/.config/collie/.env` as the script writes them (also `COLLIE_PORT`, which moves every address to that port) |
-| That Collie bound to a local-network address only (the settings above) answers on that address, not on loopback, reports it as both its local and phone address, accepts `POST /api/pair` with an `Origin` (and refuses without), and pairs with the Herdogr app | A real Collie bridge in an empty home folder, then the app in the iPhone simulator against `http://<this Mac's address>:<port>` |
+| That Collie bound to a local-network address only (the settings above) answers on that address, not on loopback, reports it as both its local and phone address, accepts `POST /api/pair` with an `Origin` (and refuses without), and pairs with the Dogr app | A real Collie bridge in an empty home folder, then the app in the iPhone simulator against `http://<this Mac's address>:<port>` |
 | That every API request except the health check and the pairing is refused with `device not paired` | A real bridge, eight routes tried without a token |
 | `--lan --host ... --dry-run` on a Mac with several addresses (it lists them, and stops when there is no terminal to ask on) | Run on the author's Mac, changing nothing |
 | That `COLLIE_MUX` in the `.env` wins over the environment, and an empty `.env` follows the environment | Real `collie status --json` in an empty home folder |
@@ -322,8 +323,8 @@ the Tailscale route refusing leftovers, answering at the terminal, no terminal, 
 | That the Linux download steps work on the real release: the file is listed in `checksums.txt`, its sha-256 matches, and `tar -xzf <file> tailcat` yields a statically linked executable (for amd64; arm64 and armv7 are listed too) | The real v0.7.0 files, checked on a Mac (the executable was not run) |
 | That a leftover `COLLIE_ALLOWED_ORIGINS` of the proxy route does not stop a phone from pairing over the tunnel | A real Collie bridge: pairing with an `Origin` of the phone's own address returned 200 with and without the setting |
 | That a Collie behind `tailcat serve` pairs and answers through the tunnel with `COLLIE_SKIP_SERVE=1`, `COLLIE_PUBLIC_HOSTS=127.0.0.1:<port>` and a `COLLIE_PUBLIC_URL` carrying the address; that the link `collie pair` prints with it is 200 characters and fits a QR code | Real Collie and real tailcat (a 0.7.0 server with a saved key and a newer client), an iPhone simulator, and two real iPhones (Wi-Fi and mobile data) with a test app |
-| The iroh mechanics with the real programs: a real dumbpipe 0.40.1 (`listen-tcp --custom-alpn`) in front of a small web server on one Mac, reached by a Swift program through the Herdogr app's iroh library (iroh-ffi 1.2.0): connect by endpoint id alone, a request over HTTP keep-alive on one stream, a wrong name refused at the handshake with `peer doesn't support any known protocol`, and the endpoint id derived from the key with `openssl` equal to the one in the ticket | Run on the author's Mac in a throw-away folder; both ends were on one Mac, so it says nothing about mobile data or other countries |
-| `--relay-url`: a dumbpipe built from the pinned commit (`e2181df077ff`) listens with `--relay http://127.0.0.1:3340` in front of a scripted Collie stand-in; the Herdogr app (iPhone simulator, relay address in its Add form) pairs, shows the machine online and its spaces; with the relay stopped and the app reopened the machine is offline, and online again after the relay and this computer's endpoint came back | Run on the author's Mac with a throw-away `iroh-relay --dev` (http, local only), a scratch folder and no real Collie or service; both ends were on one Mac |
+| The iroh mechanics with the real programs: a real dumbpipe 0.40.1 (`listen-tcp --custom-alpn`) in front of a small web server on one Mac, reached by a Swift program through the Dogr app's iroh library (iroh-ffi 1.2.0): connect by endpoint id alone, a request over HTTP keep-alive on one stream, a wrong name refused at the handshake with `peer doesn't support any known protocol`, and the endpoint id derived from the key with `openssl` equal to the one in the ticket | Run on the author's Mac in a throw-away folder; both ends were on one Mac, so it says nothing about mobile data or other countries |
+| `--relay-url`: a dumbpipe built from the pinned commit (`e2181df077ff`) listens with `--relay http://127.0.0.1:3340` in front of a scripted Collie stand-in; the Dogr app (iPhone simulator, relay address in its Add form) pairs, shows the machine online and its spaces; with the relay stopped and the app reopened the machine is offline, and online again after the relay and this computer's endpoint came back | Run on the author's Mac with a throw-away `iroh-relay --dev` (http, local only), a scratch folder and no real Collie or service; both ends were on one Mac |
 | The real installers of herdr and herdr-core, and a real `herdr status server` text when it is not running | Not yet (the tests use stubs; the "not running" wording was read from a real Herdr) |
 | The progress line, drawn by the real `curl` against the real Collie release on GitHub (`2.0 / 47.1 MB  (4%)  0.3 MB/s`, then curl's own timeout message and exit code 28 passed through, no leftover files) | Run on the author's Mac with `DOGR_PROGRESS=always` and an 8-second limit. Not yet seen in a real terminal window with Collie's own installer. |
 | A real `collie start` with a real Tailscale, with or without HTTPS certificates | Not yet |
