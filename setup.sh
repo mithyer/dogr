@@ -1,7 +1,7 @@
 #!/bin/sh
 # dogr setup.sh - put Collie on this computer and pair your phone with it.
 #
-# Five ways for the phone to reach this computer (--tailscale, --tailcat, --iroh, --proxy, --lan; without one the script asks). It calls the
+# Six ways for the phone to reach this computer (--tailscale, --tailcat, --iroh, --ssh, --proxy, --lan; without one the script asks). It calls the
 # commands of the programs it sets up and checks the result:
 #   1. install Collie, only if it is not installed yet (Collie's own installer);
 #   2. make sure the terminal program Collie drives is there and running: herdr or herdr-core (--mux picks one). A missing
@@ -11,13 +11,16 @@
 #      publishes nothing itself. For tailcat this script first installs tailcat, makes a saved key (so the address stays
 #      the same) and runs `tailcat serve` as a background service of your own user (launchd or systemd --user). Through iroh
 #      (--iroh) it is the same idea with dumbpipe: a saved secret key and a secret name, and `dumbpipe listen-tcp` as the service;
+#      through SSH (--ssh) nothing is installed: Collie answers on 127.0.0.1 only and the phone logs in to this computer's SSH server
+#      and forwards its connection to it (with --ssh-key the script adds one restricted line to ~/.ssh/authorized_keys);
 #   4. check that Collie answers where the phone will look for it, and drives the program you picked;
 #   5. `collie pair`, last of all, so the one-time code has all of its ten minutes left.
 # Lines of Collie's own .env may change, each only in the way the plan says before you agree: COLLIE_MUX, when it names the
 # other terminal program than the one you picked; on a tailnet without HTTPS certificates (Headscale, for one)
 # COLLIE_SERVE_MODE=http (with your agreement or --http); and for --proxy and --lan the settings that route needs
 # (COLLIE_SKIP_SERVE, COLLIE_PUBLIC_URL and friends). A line that is there is replaced where it stands, a missing one is added.
-# The tailcat and iroh routes also write a service file and a log (see the README for where, and how to undo it).
+# The tailcat and iroh routes also write a service file and a log, and the ssh route may write one line of ~/.ssh/authorized_keys
+# (see the README for where, and how to undo it).
 #
 # Run it:        curl -fsSL https://dogr.dev/setup.sh | sh
 # Options go after `-s --`:   ... | sh -s -- --tailscale --yes
@@ -37,6 +40,7 @@
 #   DOGR_TAILCAT_RELEASE_URL  where those release files are (default https://github.com/tailscale/tailcat/releases/download/v<version>)
 #   DOGR_DUMBPIPE_RELEASE_URL where dumbpipe's release files are (default https://github.com/n0-computer/dumbpipe/releases/download/v<version>)
 #   DOGR_DUMBPIPE_SHA256      the SHA-256 the dumbpipe file must have, for a mirror whose file is not the pinned release's
+#   DOGR_SSH_HOST_KEY         the public file of this computer's ssh-ed25519 host key (default /etc/ssh/ssh_host_ed25519_key.pub)
 #   DOGR_PROGRESS             always | never | auto (default): draw "12.3 / 45.6 MB" while the installers download (auto = on a terminal only)
 #   DOGR_TTY                  where answers are read from (default /dev/tty); a test points it at a file
 #   DOGR_TRIES, DOGR_POLL_DELAY   how often and how far apart to check that Collie answers (default 20 and 1 second)
@@ -54,7 +58,7 @@ main() {
     TTY=${DOGR_TTY:-/dev/tty}
     TRIES=${DOGR_TRIES:-20}
     DELAY=${DOGR_POLL_DELAY:-1}
-    # how the phone reaches this computer: tailscale, tailcat, iroh, proxy or lan; empty until an option or the questions say
+    # how the phone reaches this computer: tailscale, tailcat, iroh, ssh, proxy or lan; empty until an option or the questions say
     ROUTE=
     # the https:// address of the reverse proxy (--url), and the address of this computer on the local network (--host)
     PROXY_URL=
@@ -94,6 +98,20 @@ main() {
     IR_TICKET=
     IR_LOG=$HOME/.local/state/dogr/iroh.log
     IR_BIN=
+    # ssh: the port of this computer's SSH server (--ssh-port, default 22), the phone's public key (--ssh-key: the base64 part of an
+    # ssh-ed25519 line and nothing else), the first part of the link the phone is given, the user the phone logs in as, the
+    # fingerprint of this computer's ssh-ed25519 host key (SHA-256, URL-safe, no padding; "none" when it has none), where that key's
+    # public file is, the file the phone's key goes into, what the plan found there for that key (new, update, there or held)
+    # and 1 when nothing answers on the SSH port of this computer.
+    SSH_PORT=
+    SSH_KEY=
+    SSH_BASE=http://ssh.invalid
+    SSH_USER=
+    SSH_FP=
+    SSH_HOSTKEY=${DOGR_SSH_HOST_KEY:-/etc/ssh/ssh_host_ed25519_key.pub}
+    SSH_AUTH=$HOME/.ssh/authorized_keys
+    SSH_KEY_STATE=
+    SSH_DOWN=0
     # the port Collie listens on (COLLIE_PORT of the .env, else Collie's default)
     PORT=8787
     # the settings this route needs in Collie's .env, as KEY=VALUE words separated by spaces (no value has a space in it)
@@ -276,11 +294,12 @@ WRAPPER
 
     usage() {
         cat <<'EOF'
-Usage: setup.sh [--tailscale | --tailcat [--derpmap-url URL] [--region NAME] | --iroh [--relay-url URL] | --proxy --url URL | --lan [--host ADDRESS]]
+Usage: setup.sh [--tailscale | --tailcat [--derpmap-url URL] [--region NAME] | --iroh [--relay-url URL] | --ssh [--ssh-port N] [--ssh-key KEY]
+                | --proxy --url URL | --lan [--host ADDRESS]]
                 [--mux herdr|herdr-core] [--http] [--yes] [--dry-run] [--help]
 
 Puts Collie on this computer, sets it up for the way your phone reaches it, and shows a QR code that pairs your phone.
-Without --tailscale, --tailcat, --iroh, --proxy or --lan the script asks which way you use.
+Without --tailscale, --tailcat, --iroh, --ssh, --proxy or --lan the script asks which way you use.
 
   --tailscale   Your phone reaches this computer through Tailscale: Collie is published on your tailnet.
   --tailcat     Your phone reaches this computer through tailcat: an end-to-end encrypted tunnel with no account and no
@@ -299,6 +318,13 @@ Without --tailscale, --tailcat, --iroh, --proxy or --lan the script asks which w
                 authentication switched off) instead of n0's public relays. https, or http on this computer or the local network.
                 The phone needs the same address. No dumbpipe release has this option yet, so the script builds one from
                 a pinned commit (needs Rust's cargo; a few minutes). Implies --iroh.
+  --ssh         Your phone reaches this computer through SSH: it logs in to this computer's SSH server and forwards its connection
+                to Collie, which answers on 127.0.0.1 only. Nothing is installed. The SSH server has to run and the phone has to be
+                able to reach it (on a Mac: System Settings > General > Sharing > Remote Login).
+  --ssh-port N  ssh: the port of this computer's SSH server (default 22). Implies --ssh.
+  --ssh-key KEY ssh: the public key of your phone: the long base64 part of an 'ssh-ed25519 AAAA...' line, nothing else. The script
+                adds one line to ~/.ssh/authorized_keys that lets that key forward to Collie and do nothing else. Without it the
+                phone signs in with your password. Implies --ssh.
   --proxy       Your phone reaches this computer through your own domain, with a reverse proxy you run in front of Collie.
                 Needs --url (or the script asks for it). The script sets Collie up behind the proxy; it does not set up
                 the proxy, its certificate or who may reach it.
@@ -325,7 +351,7 @@ EOF
     set_route() {
         if [ -n "$ROUTE" ] && [ "$ROUTE" != "$1" ]; then
             usage >&2
-            die 1 "choose one way for the phone to reach this computer: --tailscale, --tailcat, --iroh, --proxy or --lan (one way at a time)."
+            die 1 "choose one way for the phone to reach this computer: --tailscale, --tailcat, --iroh, --ssh, --proxy or --lan (one way at a time)."
         fi
         ROUTE=$1
     }
@@ -554,16 +580,18 @@ EOF
             printf '%s\n' "  2) through your own domain, with a reverse proxy you run in front of Collie (HTTPS)"
             printf '%s\n' "  3) over the local network, with plain http and no encryption"
             printf '%s\n' "  4) through iroh: also an encrypted tunnel with no account, no server and no open port (n0's free public relays)"
-            printf '%s' "Enter 1, 2, 3 or 4: "
+            printf '%s\n' "  5) through SSH: the phone logs in to this computer's SSH server and uses it as the tunnel (nothing is installed)"
+            printf '%s' "Enter 1, 2, 3, 4 or 5: "
         } >&2
         answer=
-        IFS= read -r answer <&3 || die 1 "no answer. Run again with --tailcat, --iroh, --proxy or --lan."
+        IFS= read -r answer <&3 || die 1 "no answer. Run again with --tailcat, --iroh, --ssh, --proxy or --lan."
         case $answer in
             1 | tailcat) ROUTE=tailcat ;;
             2 | proxy) ROUTE=proxy ;;
             3 | lan) ROUTE=lan ;;
             4 | iroh) ROUTE=iroh ;;
-            *) die 1 "'$answer' is not 1, 2, 3 or 4. Run again with --tailcat, --iroh, --proxy or --lan." ;;
+            5 | ssh) ROUTE=ssh ;;
+            *) die 1 "'$answer' is not 1, 2, 3, 4 or 5. Run again with --tailcat, --iroh, --ssh, --proxy or --lan." ;;
         esac
     }
 
@@ -1009,6 +1037,136 @@ EOF
         esac
     }
 
+    # ssh_key_line: the line that goes into authorized_keys for the phone's key. `restrict` takes every right away, `port-forwarding`
+    # gives back the one that is needed, `permitopen` limits it to Collie's port on this computer, and the forced command makes a
+    # login that asks for a shell do nothing. The comment at the end is how this script finds its own lines again.
+    ssh_key_line() {
+        printf 'restrict,port-forwarding,permitopen="127.0.0.1:%s",command="false" ssh-ed25519 %s dogr-phone' "$PORT" "$SSH_KEY"
+    }
+
+    # ssh_key_state: what authorized_keys has for the phone's key, in SSH_KEY_STATE: new (nothing), update (a line of this script
+    # with other options, which is replaced), there (exactly this line) or held (a line of yours that lets the key in; left alone).
+    ssh_key_state() {
+        SSH_KEY_STATE=new
+        [ -f "$SSH_AUTH" ] || return 0
+        if grep -qxF -- "$(ssh_key_line)" "$SSH_AUTH"; then
+            SSH_KEY_STATE=there
+        elif awk -v k="$SSH_KEY" 'index($0, k) && $NF == "dogr-phone" { found = 1 } END { exit !found }' "$SSH_AUTH"; then
+            SSH_KEY_STATE=update
+        elif grep -qF -- "$SSH_KEY" "$SSH_AUTH"; then
+            SSH_KEY_STATE=held
+        fi
+    }
+
+    # check_ssh_options: stop (exit 1) unless the port and the key that were asked for are usable. A key is checked by its shape
+    # only (an ssh-ed25519 blob is 68 base64 characters that start the same way); the value is never printed back.
+    check_ssh_options() {
+        [ -n "$SSH_PORT" ] || SSH_PORT=22
+        case $SSH_PORT in
+            '' | *[!0-9]*) die 1 "--ssh-port needs a number from 1 to 65535." ;;
+        esac
+        { [ "${#SSH_PORT}" -le 5 ] && [ "$SSH_PORT" -ge 1 ] && [ "$SSH_PORT" -le 65535 ]; } || die 1 "--ssh-port needs a number from 1 to 65535."
+        [ -n "$SSH_KEY" ] || return 0
+        case $SSH_KEY in
+            AAAAC3NzaC1lZDI1NTE5AAAAI*) ;;
+            *) die 1 "--ssh-key must be the base64 part of an ssh-ed25519 public key (it starts with AAAAC3NzaC1lZDI1NTE5AAAAI)." ;;
+        esac
+        case $SSH_KEY in
+            *[!A-Za-z0-9+/]*) die 1 "--ssh-key must be the base64 part of an ssh-ed25519 public key: letters, digits, + and / only, no spaces." ;;
+        esac
+        [ "${#SSH_KEY}" = 68 ] || die 1 "--ssh-key is not the length of an ssh-ed25519 public key (68 characters)."
+    }
+
+    # resolve_ssh: the settings this route needs. Nothing here needs a service of ours, so every setting is known now: Collie answers
+    # on 127.0.0.1 only, and the phone's SSH login forwards to it. The link carries nothing secret and no host name (the phone knows
+    # the one it logs in to): the SSH port, the fingerprint of this computer's host key (so the phone can tell it reached this
+    # computer), Collie's port and the user to log in as, as <port>:<fingerprint>:<collie port>:<user>.
+    resolve_ssh() {
+        check_ssh_options
+        SSH_USER=$(id -un 2>/dev/null) || SSH_USER=
+        case $SSH_USER in
+            '' | *[!A-Za-z0-9._-]*) die 1 "this account's user name ('$SSH_USER') is empty or has characters the link cannot carry (letters, digits, dot, dash and underscore only)." ;;
+        esac
+        SSH_FP=none
+        if [ -r "$SSH_HOSTKEY" ] && command -v ssh-keygen >/dev/null 2>&1; then
+            ssh_fp=$(ssh-keygen -lf "$SSH_HOSTKEY" -E sha256 2>/dev/null </dev/null | awk 'NR == 1 { print $2 }')
+            case $ssh_fp in
+                SHA256:*) SSH_FP=$(printf '%s' "${ssh_fp#SHA256:}" | tr '+/' '-_' | tr -d '=') ;;
+            esac
+        fi
+        # a fingerprint is 43 characters; anything else is not one, and the phone then asks about the key itself
+        case $SSH_FP in
+            *[!A-Za-z0-9_-]*) SSH_FP=none ;;
+        esac
+        { [ "$SSH_FP" = none ] || [ "${#SSH_FP}" = 43 ]; } || SSH_FP=none
+        PUBLIC_URL=$SSH_BASE/$SSH_PORT:$SSH_FP:$PORT:$SSH_USER
+        want COLLIE_SKIP_SERVE 1
+        want COLLIE_PUBLIC_HOSTS "127.0.0.1:$PORT"
+        want COLLIE_PUBLIC_URL "$PUBLIC_URL"
+        case $(env_get COLLIE_HOST) in
+            '' | 127.0.0.1 | localhost | ::1) ;;
+            *) want COLLIE_HOST 127.0.0.1 ;;
+        esac
+        if [ -n "$SSH_KEY" ]; then ssh_key_state; fi
+        # The script cannot see the phone's way to the SSH server, but it can see that there is a server at all. A server that
+        # listens on one address only would be reported as missing, so this is a warning and never a stop.
+        if command -v nc >/dev/null 2>&1 && ! nc -z 127.0.0.1 "$SSH_PORT" >/dev/null 2>&1 </dev/null; then
+            SSH_DOWN=1
+            warn "nothing answers on port $SSH_PORT of this computer, so the phone has no SSH server to log in to."
+            if [ "$(uname -s)" = Darwin ]; then
+                warn "Turn it on in System Settings > General > Sharing > Remote Login (or: sudo systemsetup -setremotelogin on)."
+            else
+                warn "Start it with: sudo systemctl enable --now ssh (the service is called sshd on some systems)."
+            fi
+        fi
+    }
+
+    # plan_ssh: the plan lines for the SSH route
+    plan_ssh() {
+        plan "Install nothing. Collie answers on 127.0.0.1:$PORT only; the phone logs in to this computer's SSH server (port $SSH_PORT) as '$SSH_USER' and forwards to it."
+        if [ -z "$SSH_KEY" ]; then
+            plan "Leave $SSH_AUTH alone: no --ssh-key was given, so the phone signs in with your password."
+            return 0
+        fi
+        case $SSH_KEY_STATE in
+            there) plan "Keep the line in $SSH_AUTH that lets the phone's key forward to Collie: it is there already." ;;
+            held) plan "Leave $SSH_AUTH as it is: a line of yours lets the phone's key in already." ;;
+            update) plan "Replace the line of an earlier run in $SSH_AUTH with one that lets the phone's key forward to 127.0.0.1:$PORT and nothing else." ;;
+            *) plan "Add one line to $SSH_AUTH (made private to you) that lets the phone's key forward to 127.0.0.1:$PORT and nothing else: no shell, no other port." ;;
+        esac
+    }
+
+    # setup_ssh: write the phone's key line into authorized_keys, unless the plan said it is there or a line of the user's has it.
+    # Every other line of the file stays as it is; only a line this script wrote for the same key is replaced.
+    setup_ssh() {
+        [ -n "$SSH_KEY" ] || return 0
+        say ""
+        say "==> Letting the phone's key forward to Collie"
+        case $SSH_KEY_STATE in
+            there)
+                say "  $SSH_AUTH has the line already"
+                return 0
+                ;;
+            held)
+                say "  $SSH_AUTH lets this key in through a line of yours; it is left as it is"
+                return 0
+                ;;
+        esac
+        ssh_dir=${SSH_AUTH%/*}
+        (umask 077 && mkdir -p "$ssh_dir") || die 4 "could not make $ssh_dir."
+        ssh_new=$WORK/authorized_keys
+        {
+            if [ -f "$SSH_AUTH" ]; then
+                awk -v k="$SSH_KEY" '!(index($0, k) && $NF == "dogr-phone")' "$SSH_AUTH"
+            fi
+            ssh_key_line
+            printf '\n'
+        } >"$ssh_new" || die 4 "could not prepare the new $SSH_AUTH."
+        (umask 077 && cat "$ssh_new" >"$SSH_AUTH") || die 4 "could not write $SSH_AUTH."
+        chmod 600 "$SSH_AUTH" || die 4 "could not make $SSH_AUTH private to you."
+        say "  $SSH_AUTH: the phone's key may forward to 127.0.0.1:$PORT and do nothing else"
+    }
+
     # iroh_release: the dumbpipe release file this computer takes (IR_FILE) and the SHA-256 it must have (IR_SUM). The sums are
     # the digests GitHub shows for the files of release v0.40.1; the release has no checksum file of its own. Stops (exit 5)
     # when there is no release for this computer, which the plan already says, before anything is changed.
@@ -1330,6 +1488,33 @@ EOF
                 set_route tailcat
                 TC_REGION=${1#--region=}
                 ;;
+            --ssh) set_route ssh ;;
+            --ssh-port)
+                if [ $# -lt 2 ]; then
+                    usage >&2
+                    die 1 "--ssh-port needs a value: the port of this computer's SSH server"
+                fi
+                set_route ssh
+                SSH_PORT=$2
+                shift
+                ;;
+            --ssh-port=*)
+                set_route ssh
+                SSH_PORT=${1#--ssh-port=}
+                ;;
+            --ssh-key)
+                if [ $# -lt 2 ]; then
+                    usage >&2
+                    die 1 "--ssh-key needs a value: the base64 part of your phone's ssh-ed25519 public key"
+                fi
+                set_route ssh
+                SSH_KEY=$2
+                shift
+                ;;
+            --ssh-key=*)
+                set_route ssh
+                SSH_KEY=${1#--ssh-key=}
+                ;;
             --proxy) set_route proxy ;;
             --lan) set_route lan ;;
             --url)
@@ -1405,7 +1590,7 @@ EOF
 
     # The first question: which way does the phone reach this computer? Tailscale first; "no" leads to the other two.
     if [ -z "$ROUTE" ]; then
-        have_tty || die 1 "there is no terminal to ask on. Run again with --tailscale, --tailcat, --iroh, --proxy or --lan (and --yes) to answer for you."
+        have_tty || die 1 "there is no terminal to ask on. Run again with --tailscale, --tailcat, --iroh, --ssh, --proxy or --lan (and --yes) to answer for you."
         if ask_yes_no "Do you reach this computer from your phone through Tailscale?"; then
             ROUTE=tailscale
         else
@@ -1422,6 +1607,7 @@ EOF
         tailscale) check_leftovers ;;
         tailcat) resolve_tailcat ;;
         iroh) resolve_iroh ;;
+        ssh) resolve_ssh ;;
         proxy) resolve_proxy ;;
         lan) resolve_lan ;;
     esac
@@ -1489,6 +1675,7 @@ EOF
     fi
     if [ "$ROUTE" = tailcat ]; then plan_tailcat; fi
     if [ "$ROUTE" = iroh ]; then plan_iroh; fi
+    if [ "$ROUTE" = ssh ]; then plan_ssh; fi
     if [ "$ROUTE" != tailscale ]; then plan_settings; fi
     case $ROUTE in
         tailscale)
@@ -1502,6 +1689,9 @@ EOF
         iroh)
             plan "Also set COLLIE_PUBLIC_URL to $IR_BASE/<your iroh address> once the service runs (that is what the QR code carries)."
             plan "Start Collie in the background (launchd on macOS, systemd --user on Linux), driving $MUX. It answers on 127.0.0.1 only; the tunnel carries the phone to it."
+            ;;
+        ssh)
+            plan "Start Collie in the background (launchd on macOS, systemd --user on Linux), driving $MUX. It answers on 127.0.0.1 only; the SSH login carries the phone to it."
             ;;
         proxy)
             plan "Start Collie in the background (launchd on macOS, systemd --user on Linux), driving $MUX. It answers on 127.0.0.1 only; your reverse proxy is what the phone reaches."
@@ -1535,6 +1725,19 @@ EOF
             say "The tunnel goes through n0's public iroh relay servers until your phone and this computer find a direct path. They are"
             say "free; n0 says they are for development and testing and promises no speed or uptime. The traffic is end-to-end encrypted."
         fi
+        say ""
+    fi
+    if [ "$ROUTE" = ssh ]; then
+        say ""
+        say "Please note: this route adds no second door to this computer. Whoever can log in over SSH as '$SSH_USER' can already do"
+        say "anything you can, with or without Collie. Collie keeps its own door: pairing needs the one-time code, and every other"
+        say "request needs the key that pairing hands out."
+        if [ -n "$SSH_KEY" ]; then
+            say "The line for the phone's key lets that key open a tunnel to Collie (127.0.0.1:$PORT) and nothing else."
+        else
+            say "With no --ssh-key the phone signs in with your account's password, which gives it a full login. A key is the safer way."
+        fi
+        say "The SSH server has to stay on, and the phone has to be able to reach it (the same network, a VPN, or a port you forward)."
         say ""
     fi
     if [ "$ROUTE" = lan ]; then
@@ -1632,6 +1835,7 @@ EOF
     export COLLIE_MUX
     if [ "$ROUTE" = tailcat ]; then setup_tailcat; fi
     if [ "$ROUTE" = iroh ]; then setup_iroh; fi
+    if [ "$ROUTE" = ssh ]; then setup_ssh; fi
     if [ "$ROUTE" != tailscale ]; then apply_settings; fi
 
     # Step 3: start Collie. It prints lines starting with "setup:" for what is missing; it never stops on them itself.
@@ -1710,7 +1914,7 @@ EOF
                 warn "$phone_url did not answer from this computer. If your phone cannot connect either, run 'collie doctor'."
             fi
             ;;
-        proxy | lan | tailcat | iroh)
+        proxy | lan | tailcat | iroh | ssh)
             # Collie must give the address that was asked for: if it does not, it did not read the settings.
             if [ "$phone_url" != "$PUBLIC_URL" ]; then
                 say ""
@@ -1749,6 +1953,8 @@ EOF
                 say "  through tailcat: the service runs and Collie gives the address it printed (log: $TC_LOG)"
             elif [ "$ROUTE" = iroh ]; then
                 say "  through iroh: the service runs and Collie gives the address of its endpoint (log: $IR_LOG)"
+            elif [ "$ROUTE" = ssh ]; then
+                say "  through SSH: Collie answers on 127.0.0.1:$PORT and gives the address the phone expects"
             else
                 say "  on the local network: $phone_url answers"
             fi
@@ -1785,6 +1991,17 @@ EOF
         say "runs out, run: collie pair"
         if [ "$(uname -s)" != Darwin ]; then
             say "To keep the service running when you are logged out (a server), run once: loginctl enable-linger \$USER"
+        fi
+    fi
+    if [ "$ROUTE" = ssh ]; then
+        say "The link has no host name: the app asks for the name or address of this computer that your phone can reach."
+        if [ -n "$SSH_KEY" ]; then
+            say "The phone signs in as '$SSH_USER' with its key; the line for it is in $SSH_AUTH."
+        else
+            say "The phone signs in as '$SSH_USER' with your account's password."
+        fi
+        if [ "$SSH_DOWN" = 1 ]; then
+            say "Remember: nothing answered on SSH port $SSH_PORT of this computer. The phone can connect only when an SSH server is on."
         fi
     fi
     if [ "$ROUTE" = lan ]; then

@@ -52,11 +52,12 @@ that. The script is one file, about 1,600 lines, most of them comments and check
 | Tailscale or Headscale without HTTPS certificates (address starts with `http://`) | `--tailscale --http` | The same, with `COLLIE_SERVE_MODE=http`. Only when you agree or pass `--http`. Tailscale still encrypts the traffic between your devices; the address is just not HTTPS. | Nothing more. |
 | tailcat: an end-to-end encrypted tunnel with no account, no server of yours and no open port | `--tailcat` (optionally `--derpmap-url`, `--region`) | Installs tailcat, makes a saved key, runs `tailcat serve` for Collie's port as a background service of your user, and puts the secret tailcat address into the pairing QR code (`COLLIE_SKIP_SERVE`, `COLLIE_PUBLIC_HOSTS`, `COLLIE_PUBLIC_URL`). | On macOS, Homebrew. On Linux, nothing (systemd `--user` is used). |
 | iroh: another end-to-end encrypted tunnel with no account, no server of yours and no open port, over n0's public relay servers, or one of yours | `--iroh` (optionally `--relay-url`) | Installs dumbpipe (a pinned release, checked against its SHA-256), makes two saved secrets, runs `dumbpipe listen-tcp` for Collie's port as a background service of your user, and puts the secret iroh address into the pairing QR code (`COLLIE_SKIP_SERVE`, `COLLIE_PUBLIC_HOSTS`, `COLLIE_PUBLIC_URL`). With `--relay-url` it builds dumbpipe with `cargo` so that it uses your relay. | Nothing: the release file is downloaded, so no Homebrew either. With `--relay-url`: Rust's `cargo`. |
+| SSH: the phone logs in to this computer's own SSH server and forwards one port to Collie; for a server with a public address, or a network you already reach by SSH | `--ssh` (optionally `--ssh-port`, `--ssh-key`) | Installs nothing. Collie answers on `127.0.0.1` only; with `--ssh-key` the script adds one restricted line to `~/.ssh/authorized_keys`, so the phone's key may open a connection to Collie's port and do nothing else. | Switch on SSH on this computer (macOS: System Settings > General > Sharing > Remote Login) and make it reachable from the phone. |
 | Your own domain behind a reverse proxy | `--proxy --url https://collie.example.com` | Collie answers on `127.0.0.1` only and is told its public address (`COLLIE_SKIP_SERVE`, `COLLIE_PUBLIC_HOSTS`, `COLLIE_ALLOWED_ORIGINS`, `COLLIE_PUBLIC_URL`). Checks that the address answers, prints a Caddy example, and makes the pairing code only when it does. | The proxy itself, its certificate, and who may reach it. |
 | Local network, plain http, no encryption | `--lan` (and `--host 192.168.1.20` to name the address) | Finds this computer's local-network address (asks when there are several), makes Collie answer on that address only (`COLLIE_HOST`, `COLLIE_ALLOW_NON_LOOPBACK_BIND` and the four settings above) and checks it. | Keep it to a network you trust. |
 
 Without a route option the first question is "Do you reach this computer from your phone through Tailscale?". Answer no and it asks
-whether it is tailcat, iroh, your own domain behind a reverse proxy, or the local network (answer with the number or the word). Another route than the one you ran before is fine:
+whether it is tailcat, iroh, your own domain behind a reverse proxy, the local network, or SSH (answer with the number or the word). Another route than the one you ran before is fine:
 the lines the script added are replaced where they stand. Only the Tailscale route refuses to run over a leftover of the others
 (`COLLIE_SKIP_SERVE=1` or a `COLLIE_HOST` that is not loopback), because Collie would silently not publish itself; it names the
 lines to delete.
@@ -170,6 +171,45 @@ Things to know:
 - Every connection the phone opens locally becomes one connection to dumbpipe, so a phone that keeps one HTTP connection open uses one.
 - The Dogr app needs iOS 17.5 or newer for the iroh route (the library's own minimum).
 
+### The SSH route
+
+Many computers can already be reached by SSH: a server with a public address, a machine on a network you trust, a VPN. The
+phone then needs nothing more than the sign-in it would use for SSH. The Dogr app opens an SSH connection to this computer and
+forwards a local port on the phone to Collie's port here, so Collie keeps answering on `127.0.0.1` only and no new program or
+service runs on this computer.
+
+What the script does:
+
+1. **Installs nothing and starts no service.** Collie is told, as for the tunnel routes, to publish nothing itself
+   (`COLLIE_SKIP_SERVE=1`, `COLLIE_PUBLIC_HOSTS=127.0.0.1:<port>`) and to give out `COLLIE_PUBLIC_URL=http://ssh.invalid/<ssh port>:<host key
+   fingerprint>:<Collie's port>:<your user name>`. That host name never resolves; the Dogr app recognises it. It names no host, because
+   the script cannot know how the phone reaches this computer: the app asks for that address.
+2. **With `--ssh-key`**, adds one line to `~/.ssh/authorized_keys` (the folder `~/.ssh` mode 700, the file mode 600, created when missing):
+
+   ```text
+   restrict,port-forwarding,permitopen="127.0.0.1:<Collie's port>",command="false" ssh-ed25519 <key> dogr-phone
+   ```
+
+   That key can open a connection to Collie's port on this computer and nothing else: no shell, no other port, no agent or X11
+   forwarding. A line for the same key is replaced, never duplicated. Your other lines are not touched, and when you already
+   allow the same key without limits the script leaves that line as it is and says so.
+3. **Without `--ssh-key`** it writes nothing to `~/.ssh`: the phone signs in with the password of your user, which is stored on the
+   phone only, in its Keychain. A key is the better choice; a password works for any SSH server that allows passwords.
+4. **Checks whether something answers on the SSH port** of this computer and warns when not. It cannot switch SSH on for you (on a
+   Mac: System Settings > General > Sharing > Remote Login, or `sudo systemsetup -setremotelogin on`; on Linux: `sudo systemctl
+   enable --now ssh` or `sshd`). It does not stop, because the check only sees this computer, not what your phone can reach.
+
+The key is made by the Dogr app, on the phone, and never leaves it; the script only ever sees the public half. The fingerprint of
+this computer's `ssh-ed25519` host key travels in the link, so the phone can refuse a computer whose key differs. With no such
+key (`none` in the link) the phone shows the fingerprint it sees and asks you once.
+
+Things to know:
+
+- It reaches only as far as SSH does. Unlike tailcat or iroh there is no finding a way through a home router; a computer behind
+  one needs its SSH port forwarded or a VPN in between.
+- Do not put a password-only SSH server on the internet: that is for you to secure, not for this script.
+- `command="false"` makes a connection with this key that asks for a shell end at once; the port forward is what the key is for.
+
 ## Which Collie
 
 Dogr uses its own build of [Collie](https://github.com/AltanS/collie), published as releases of
@@ -212,6 +252,9 @@ curl -fsSL https://dogr.dev/setup.sh | sh -s -- --tailscale --yes
 | `--tailcat` | The phone reaches it through a tailcat tunnel. |
 | `--iroh` | The phone reaches it through an iroh tunnel (dumbpipe). |
 | `--relay-url URL` | iroh: use a relay server of your own (`https://`, or `http://` on this computer or the local network; a host name, no user name, no query or fragment) instead of n0's public relays. Implies `--iroh`. The phone must be given the same address; the Dogr app puts it into this command from its own field. Needs Rust's `cargo`, see [your own relay](#your-own-relay). |
+| `--ssh` | The phone reaches it through this computer's SSH server. |
+| `--ssh-port N` | ssh: the port of this computer's SSH server (default 22). The phone is told the same number. Implies `--ssh`. |
+| `--ssh-key KEY` | ssh: the public key of the phone, only the base64 part of an `ssh-ed25519` line (68 characters beginning `AAAAC3NzaC1lZDI1NTE5AAAAI`). The script allows that key to open a connection to Collie's port, nothing else (see [the SSH route](#the-ssh-route)). Implies `--ssh`. Without it nothing is written to `~/.ssh`; use it when the phone signs in with a password. |
 | `--derpmap-url https://relay.example.com/map.json` | tailcat: your own relay map (`https://`, a host name, no user name, and only letters, digits and `. _ ~ : / ? = & # + , -`). Used for the key and the service. Implies `--tailcat`. |
 | `--region NAME` | tailcat: the relay region for a new key (an ID, code or name from `tailcat genkey --region=list`, or the host name of your own relay). Implies `--tailcat`. |
 | `--proxy` | The phone reaches it through your own domain and a reverse proxy. |
@@ -233,6 +276,7 @@ curl -fsSL https://dogr.dev/setup.sh | sh -s -- --tailscale --yes
 | `DOGR_TAILCAT_VERSION`, `DOGR_TAILCAT_RELEASE_URL` | Linux: which tailcat release to download (default `0.7.0`) and where its files are (default `https://github.com/tailscale/tailcat/releases/download/v<version>`). On macOS Homebrew decides the version. |
 | `DOGR_DUMBPIPE_GIT`, `DOGR_DUMBPIPE_REV` | `--iroh --relay-url`: the git repository and the commit that dumbpipe is built from (default `https://github.com/n0-computer/dumbpipe` at `e2181df077ff`). |
 | `DOGR_DUMBPIPE_RELEASE_URL`, `DOGR_DUMBPIPE_SHA256` | `--iroh`: where dumbpipe's release files are (default `https://github.com/n0-computer/dumbpipe/releases/download/v0.40.1`) and the SHA-256 the downloaded file must have. Without the second, the digest the script carries for the default release is used; set it when you use another release file. |
+| `DOGR_SSH_HOST_KEY` | `--ssh`: the public host key file whose fingerprint goes into the link, so the phone can recognise this computer. Default `/etc/ssh/ssh_host_ed25519_key.pub`. |
 | `DOGR_PROGRESS` | `always`, `never` or `auto` (default). While the installers download, a line such as `collie-1.28.1-macos-arm64.tar.gz  12.3 / 47.1 MB  (26%)  0.3 MB/s` is drawn. `auto` draws it on a terminal only, so a log or a pipe stays clean; files under 1 MB (scripts, checksums) are never drawn. Nothing about the download changes: every call still reaches the real `curl` with its own options. |
 | `DOGR_TTY` | Where answers are read from. Default `/dev/tty`. Tests point it at a file. |
 | `DOGR_TRIES`, `DOGR_POLL_DELAY` | How often, and how many seconds apart, to check that Collie answers. Default 20 and 1. |
@@ -242,7 +286,7 @@ curl -fsSL https://dogr.dev/setup.sh | sh -s -- --tailscale --yes
 | Code | Meaning | What to do |
 | --- | --- | --- |
 | 0 | Done (or a dry run, or `--help`). | Scan the code. |
-| 1 | Wrong use (two routes at once, a bad `--url`, `--host` or `--derpmap-url`), unsupported computer, or no terminal to ask on. | Read the message; add `--yes` (and the route and `--mux`) when there is no terminal. |
+| 1 | Wrong use (two routes at once, a bad `--url`, `--host`, `--derpmap-url`, `--ssh-port` or `--ssh-key`), unsupported computer, or no terminal to ask on. | Read the message; add `--yes` (and the route and `--mux`) when there is no terminal. |
 | 2 | Not used. It once meant "route not scripted"; the number stays free so the others keep their meaning. | |
 | 3 | Something needs you first: herdr is installed but not running, Collie reports a missing piece (for example Tailscale not signed in, or HTTPS not enabled and `http://` not agreed to), no local-network address was found, a proxy address that does not answer yet, settings of another route left in the `.env`, a setting of yours could not be used, or Collie drives another terminal program or gives another address than the one asked for. | Do what the message says, then run the command again. For the proxy: set it up, then `collie pair`. |
 | 4 | Collie did not start or does not answer, herdr-core could not be started, or (tailcat, iroh) the key could not be made, the service could not be started, it printed no address, or (iroh) the running service has another endpoint id than the saved key. | `collie logs`; for tailcat and iroh the message names the command, and `~/.local/state/dogr/tailcat.log` or `iroh.log` has the service's own words. |
@@ -271,6 +315,8 @@ Only what Collie's own commands change:
 | For `--iroh`: the two saved secrets and the runner | `~/.config/dogr/iroh/secret` (the key, the secret behind the address), `alpn` (the name, also secret) and `run.sh`, in a folder only you can open |
 | For `--iroh`: the service and its log | macOS `~/Library/LaunchAgents/dev.dogr.iroh.plist`, Linux `~/.config/systemd/user/dogr-iroh.service`; the log is `~/.local/state/dogr/iroh.log` (private to you, emptied at each run) |
 | For `--iroh`: the settings of that route | `COLLIE_SKIP_SERVE=1`, `COLLIE_PUBLIC_HOSTS=127.0.0.1:<port>` and `COLLIE_PUBLIC_URL=http://iroh.invalid/<iroh address>` in `~/.config/collie/.env`; a wide `COLLIE_HOST` goes back to `127.0.0.1`. The plan shows the address as `<your iroh address>`, and so does the script's own output. |
+| For `--ssh --ssh-key`: one line | `~/.ssh/authorized_keys` (the folder mode 700, the file mode 600), ending in the comment `dogr-phone` |
+| For `--ssh`: the settings of that route | `COLLIE_SKIP_SERVE=1`, `COLLIE_PUBLIC_HOSTS=127.0.0.1:<port>` and `COLLIE_PUBLIC_URL=http://ssh.invalid/<ssh port>:<fingerprint>:<port>:<user>` in `~/.config/collie/.env`; a wide `COLLIE_HOST` goes back to `127.0.0.1`. |
 | One line, only when the tailnet has no HTTPS certificates and you agreed | `COLLIE_SERVE_MODE=http` appended to `~/.config/collie/.env` (file mode 600). If the file already sets `COLLIE_SERVE_MODE`, the script stops and leaves it alone. |
 | A one-time pairing code, and later the paired devices | `~/.local/state/collie` (or `$COLLIE_STATE_DIR`); only hashes are kept |
 
@@ -311,8 +357,10 @@ rm -r ~/.config/dogr/iroh ~/.local/state/dogr/iroh.log
 rm ~/.local/bin/dumbpipe    # only if the script installed it
 ```
 
+For `--ssh`, delete the line that ends in `dogr-phone` from `~/.ssh/authorized_keys` (the phone can no longer connect), and nothing else was installed.
+
 If you chose `http://`, also delete the `COLLIE_SERVE_MODE=http` line (and the comment above it) from `~/.config/collie/.env`, then run `collie restart`.
-For `--tailcat`, `--iroh`, `--proxy` or `--lan`, delete the lines the plan listed (they sit under a `# Added by dogr setup.sh` comment): `COLLIE_SKIP_SERVE`,
+For `--tailcat`, `--iroh`, `--ssh`, `--proxy` or `--lan`, delete the lines the plan listed (they sit under a `# Added by dogr setup.sh` comment): `COLLIE_SKIP_SERVE`,
 `COLLIE_PUBLIC_HOSTS`, `COLLIE_ALLOWED_ORIGINS` (proxy and local network only), `COLLIE_PUBLIC_URL`, and for `--lan` `COLLIE_HOST` and `COLLIE_ALLOW_NON_LOOPBACK_BIND`.
 Then run `collie restart` (or `collie uninstall` as above).
 
@@ -347,7 +395,7 @@ in the Cloudflare dashboard (Workers & Pages); nothing else depends on it.
 sh tests/run.sh
 ```
 
-The tests run `setup.sh` against a stub `curl`, `collie`, `hc`, `herdr`, `ifconfig`, `ip`, `uname`, `brew`, `tailcat`, `dumbpipe`, `launchctl` and `systemctl`, each case in its own empty home folder. They cover the
+The tests run `setup.sh` against a stub `curl`, `collie`, `hc`, `herdr`, `ifconfig`, `ip`, `uname`, `brew`, `tailcat`, `dumbpipe`, `launchctl`, `systemctl`, `nc` and `ssh-keygen`, each case in its own empty home folder. They cover the
 normal path, running twice, `--dry-run`, installing first, switching an upstream Collie to the Dogr build (done, dry run, a newer Collie, an unreadable version, a failed download or installer, an installer that changes nothing), a failed download or installer, Collie naming a missing setup step,
 no Tailscale address, Collie not answering, the Tailscale address not answering from this computer, a failed start, a QR
 code that could not be drawn, a tailnet without HTTPS certificates (agreed, declined, `--http`, an existing `.env`, a setting
@@ -357,7 +405,7 @@ given, settings added, replaced or already there, a wide bind from an earlier ru
 (which addresses are offered, one or several, `--host` and its checks, Linux's `ip`, another port, no address, the risk being named before the question),
 the tailcat route (macOS with Homebrew and Linux with a downloaded release for three processors, a wrong or unlisted checksum, no Homebrew, a key that exists or fails to be made, a region or relay map, the service not starting or printing no address, an old log that must not be trusted, another port, settings already there or older, Collie not reading them; where the system has `plutil` it also checks that the launchd file is a valid property list),
 the iroh route (macOS and Linux for two processors, a processor with no release, a wrong checksum, a failed download, a dumbpipe that is installed, too old or lacks `--custom-alpn`, a relay address that is refused or passed on to the service (and the build of a dumbpipe that has `--relay`, with and without `cargo`), saved secrets that are used again or replaced when malformed, file modes, a ticket that cannot be read, a service that prints no ticket, an old log that must not be trusted, a ticket of another key, a relay that cannot be reached, a service that does not start, another port, settings already there or older, Collie not reading them, and the questions and options that lead to it; the secrets are checked to appear in no output and not in the runner),
-the Tailscale route refusing leftovers, answering at the terminal, no terminal, wrong options, running through a pipe, a download that stops half way, and the progress line (drawn when asked, quiet without a terminal or with `DOGR_PROGRESS=never`, the size in megabytes, a server that gives no length, small files, a failing download, both orders of `-o` and the address). `shellcheck` runs too when it is installed.
+the SSH route (the line added, replaced or already there, other lines kept, a key that is refused, other ports, no host key, SSH not answering, the key never printed), the Tailscale route refusing leftovers, answering at the terminal, no terminal, wrong options, running through a pipe, a download that stops half way, and the progress line (drawn when asked, quiet without a terminal or with `DOGR_PROGRESS=never`, the size in megabytes, a server that gives no length, small files, a failing download, both orders of `-o` and the address). `shellcheck` runs too when it is installed.
 
 ## What has and has not been checked
 
@@ -389,6 +437,8 @@ the Tailscale route refusing leftovers, answering at the terminal, no terminal, 
 | The four SHA-256 digests the script carries match the real dumbpipe 0.40.1 release files, and the archive holds the program as `./dumbpipe` | The four files downloaded from GitHub and hashed on a Mac, 2026-11-12 |
 | The whole `--iroh` run (the real release download by the script, a real launchd or systemd service, a real Collie, a phone that pairs over mobile data) | Not yet. The pieces were checked one by one (rows above). |
 | `--relay-url` with an `https://` relay that has a real certificate, a paid relay of n0's (authentication switched off), a phone and a computer on different networks meeting at a relay of yours, and the real `cargo install` run by the script (the tests use a stub; the build was done by hand once, about 1 minute 20 seconds with a warm cache) | Not yet |
+| The `--ssh` script logic: the line written to `authorized_keys`, replaced, kept, the key refused and never printed, the link, the warnings | `tests/run.sh`, with stubs |
+| That a real OpenSSH (macOS, a scratch `sshd` run by an ordinary user) accepts a line of this shape and allows a port forward to the one port named in `permitopen` only (the named port answered, another one was refused) | Tried on 2026-11-15 with `command="/usr/bin/false"`; the exact line the script writes is still to be tried against a real `sshd` |
 | The whole `--tailcat` run on one computer, from `curl ... | sh` to a phone that pairs over mobile data | Not yet. The pieces were checked one by one (rows above). |
 | Collie after the computer's local-network address changes | Not checked; the script says to run it again |
 | Windows | Not supported. Use Collie's own Windows guide. |
@@ -396,6 +446,7 @@ the Tailscale route refusing leftovers, answering at the terminal, no terminal, 
 ## Limits
 
 - macOS and Linux only.
+- `--ssh` does not turn SSH on, open a port, or secure the SSH server; it only adds the one restricted key line.
 - The script cannot sign you in to Tailscale, enable HTTPS in the Tailscale admin console, or install Tailscale for you. It
   tells you which of these is missing, because Collie says so, and you run it again.
 - Some computers cannot reach their own Tailscale name even though other devices can. The script then prints a warning and still

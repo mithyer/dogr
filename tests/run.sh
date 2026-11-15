@@ -281,6 +281,22 @@ esac
 exit 0
 EOF
 
+# nc: the check that something listens on the SSH port. STUB_SSHD=down: nothing does.
+cat >"$STUBS/nc" <<'EOF'
+#!/bin/sh
+echo "nc $*" >>"$STUB_LOG"
+[ "${STUB_SSHD:-up}" = down ] && exit 1
+exit 0
+EOF
+
+# ssh-keygen: only `-lf FILE -E sha256`, which prints the fingerprint of the host key. STUB_SSH_FP is what it says after SHA256:
+# (43 characters, with a + and a / in them like a real one).
+cat >"$STUBS/ssh-keygen" <<'EOF'
+#!/bin/sh
+echo "ssh-keygen $*" >>"$STUB_LOG"
+echo "256 SHA256:${STUB_SSH_FP:-Ab+cdEFgh/ijKLmnoPQrstUVwxYZ0123456789abcde} root@stub (ED25519)"
+EOF
+
 # launchctl and systemctl: a service that starts prints its address into the log file, the way `tailcat serve` does.
 # STUB_TC_NO_ADDRESS: it runs but prints none. STUB_LAUNCH_FAIL: starting it fails.
 cat >"$STUBS/launchctl" <<'EOF'
@@ -410,7 +426,7 @@ for arch in amd64 arm64 armv7; do
 done
 echo "$BADSUM  tailcat_0.7.0_windows_amd64.zip" >>"$TCDIR/checksums.txt"
 
-chmod +x "$STUBS/curl" "$STUBS/collie" "$STUBS/installer.sh" "$STUBS/hc" "$STUBS/herdr" "$STUBS/hc-installer.sh" "$STUBS/herdr-installer.sh" "$STUBS/ifconfig" "$STUBS/ip" "$STUBS/uname" "$STUBS/tailcat" "$STUBS/brew" "$STUBS/launchctl" "$STUBS/systemctl" "$STUBS/dumbpipe" "$STUBS/dumbpipe-old" "$STUBS/dumbpipe-relay" "$STUBS/cargo"
+chmod +x "$STUBS/curl" "$STUBS/collie" "$STUBS/installer.sh" "$STUBS/hc" "$STUBS/herdr" "$STUBS/hc-installer.sh" "$STUBS/herdr-installer.sh" "$STUBS/ifconfig" "$STUBS/ip" "$STUBS/uname" "$STUBS/tailcat" "$STUBS/brew" "$STUBS/nc" "$STUBS/ssh-keygen" "$STUBS/launchctl" "$STUBS/systemctl" "$STUBS/dumbpipe" "$STUBS/dumbpipe-old" "$STUBS/dumbpipe-relay" "$STUBS/cargo"
 
 # ---- the harness --------------------------------------------------------------------------------------------------------
 
@@ -474,6 +490,7 @@ run_case() {
         echo "export STUB_DUMBPIPE_RELAY=$STUBS/dumbpipe-relay"
         echo "export DOGR_DUMBPIPE_SHA256=$IRSUM"
         echo "export DOGR_TTY=$sandbox/tty"
+        echo "export DOGR_SSH_HOST_KEY=$sandbox/hostkey.pub"
         echo "export DOGR_TRIES=2"
         echo "export DOGR_POLL_DELAY=0"
     } >"$wrapper"
@@ -490,8 +507,12 @@ run_case() {
     ir_keys=0
     ir_oldlog=0
     cargo=0
+    no_nc=0
+    no_keygen=0
+    no_hostkey=0
     ask=
     envfile=
+    authkeys=
     mode="file"
     while [ $# -gt 0 ] && [ "$1" != "--" ]; do
         case $1 in
@@ -513,6 +534,10 @@ run_case() {
             IR_OLDLOG=1) ir_oldlog=1 ;;
             ASK=*) ask=${1#ASK=} ;;
             ENVFILE=*) envfile=${1#ENVFILE=} ;;
+            AUTHKEYS=*) authkeys=${1#AUTHKEYS=} ;;
+            NO_NC=1) no_nc=1 ;;
+            NO_KEYGEN=1) no_keygen=1 ;;
+            NO_HOSTKEY=1) no_hostkey=1 ;;
             PIPE=1) mode="pipe" ;;
             CUT=1) mode="cut" ;;
             *=*) printf 'export %s=%s\n' "${1%%=*}" "$(quote "${1#*=}")" >>"$wrapper" ;;
@@ -533,6 +558,9 @@ run_case() {
     if [ "$linux" = 1 ]; then cp "$STUBS/ip" "$sandbox/path/ip"; else cp "$STUBS/ifconfig" "$sandbox/path/ifconfig"; fi
     for stub in uname launchctl systemctl; do cp "$STUBS/$stub" "$sandbox/path/$stub"; done
     if [ "$no_brew" != 1 ]; then cp "$STUBS/brew" "$sandbox/path/brew"; fi
+    if [ "$no_nc" != 1 ]; then cp "$STUBS/nc" "$sandbox/path/nc"; fi
+    if [ "$no_keygen" != 1 ]; then cp "$STUBS/ssh-keygen" "$sandbox/path/ssh-keygen"; fi
+    if [ "$no_hostkey" != 1 ]; then echo "ssh-ed25519 stub" >"$sandbox/hostkey.pub"; fi
     if [ "$tc_installed" = 1 ]; then cp "$STUBS/tailcat" "$sandbox/path/tailcat"; fi
     if [ "$tc_key" = 1 ]; then echo herdogr >"$sandbox/home/.stubkeys"; fi
     if [ "$ir_installed" = 1 ]; then cp "$STUBS/dumbpipe" "$sandbox/path/dumbpipe"; fi
@@ -555,6 +583,11 @@ run_case() {
     fi
     # With no ASK there is no terminal at all: DOGR_TTY keeps pointing at a file that does not exist.
     if [ -n "$ask" ]; then printf '%s\n' "$ask" | tr ',' '\n' >"$sandbox/tty"; fi
+    if [ -n "$authkeys" ]; then
+        mkdir -p "$sandbox/home/.ssh"
+        printf '%s\n' "$authkeys" >"$sandbox/home/.ssh/authorized_keys"
+        chmod 644 "$sandbox/home/.ssh/authorized_keys"
+    fi
     if [ -n "$envfile" ]; then
         mkdir -p "$sandbox/home/.config/collie"
         printf '%s\n' "$envfile" >"$sandbox/home/.config/collie/.env"
@@ -2040,6 +2073,181 @@ run_case "help names the iroh route" -- --help
 expect_rc 0
 expect_out "--iroh"
 expect_out "dumbpipe"
+
+# ---- the SSH route --------------------------------------------------------------------------------------------------------
+
+# The key of the phone (the base64 part of an ssh-ed25519 line), another one, the fingerprint the stub ssh-keygen prints and what the
+# link carries of it (URL-safe), and the user the script logs the phone in as.
+SSH_KEY=AAAAC3NzaC1lZDI1NTE5AAAAIGq4Z9mV0dPq3sT1uWx7YcRk2NfB8hLjAe5oIvDpXzQ1
+SSH_KEY2=AAAAC3NzaC1lZDI1NTE5AAAAIPm3Zc8vKq1nXb5tR7yUe0hGjWd2LsA4oFiTxC6NuHk9
+SSH_FP_LINK=Ab-cdEFgh_ijKLmnoPQrstUVwxYZ0123456789abcde
+SSH_USER_NOW=$(id -un)
+AUTH=.ssh/authorized_keys
+ssh_line() { printf 'restrict,port-forwarding,permitopen="127.0.0.1:%s",command="false" ssh-ed25519 %s dogr-phone' "$1" "$2"; }
+ssh_url() { printf 'http://ssh.invalid/%s:%s:%s:%s' "$1" "$2" "$3" "$SSH_USER_NOW"; }
+
+# From nothing: no installer runs, the phone's key gets its one restricted line, the settings go into the .env, the pairing code comes last.
+run_case "ssh: macOS with a key" STUB_OS=Darwin -- --ssh --ssh-key $SSH_KEY --yes
+expect_rc 0
+expect_called "nc -z 127.0.0.1 22"
+expect_called "ssh-keygen -lf $sandbox/hostkey.pub -E sha256"
+expect_file "$AUTH"
+expect_file_has "$AUTH" "$(ssh_line 8787 $SSH_KEY)"
+expect_mode "$AUTH" 600
+expect_mode ".ssh" 700
+expect_env_line "COLLIE_SKIP_SERVE=1"
+expect_env_line "COLLIE_PUBLIC_HOSTS=127.0.0.1:8787"
+expect_env_line "COLLIE_PUBLIC_URL=$(ssh_url 22 $SSH_FP_LINK 8787)"
+expect_order "collie start" "collie pair"
+expect_not_called "brew"
+expect_not_called "launchctl"
+expect_not_called "systemctl"
+expect_not_called "dumbpipe"
+expect_not_called "tailcat"
+expect_not_called "download "
+expect_out "ABCD2345"
+expect_out "Letting the phone's key forward to Collie"
+expect_out "through SSH"
+expect_out "The link has no host name"
+expect_no_out "$SSH_KEY"
+
+# --ssh-key alone names the route; the plan says everything and changes nothing.
+run_case "ssh: --ssh-key implies --ssh, dry run" STUB_OS=Darwin -- --ssh-key $SSH_KEY --dry-run
+expect_rc 0
+expect_out "Install nothing"
+expect_out "Add one line to"
+expect_out "127.0.0.1:8787"
+expect_out "no shell, no other port"
+expect_out "Dry run: nothing was changed."
+expect_no_file "$AUTH"
+expect_not_called "collie start"
+
+# With no key the phone signs in with the password: authorized_keys stays untouched.
+run_case "ssh: no key, the password" STUB_OS=Darwin -- --ssh --yes
+expect_rc 0
+expect_no_file "$AUTH"
+expect_out "signs in with your account's password"
+expect_env_line "COLLIE_PUBLIC_URL=$(ssh_url 22 $SSH_FP_LINK 8787)"
+
+# Lines of the user stay; the new one goes at the end; a file of mode 644 becomes private.
+run_case "ssh: other keys in authorized_keys stay" STUB_OS=Darwin AUTHKEYS="ssh-ed25519 AAAAOTHER me@laptop" -- --ssh --ssh-key $SSH_KEY --yes
+expect_rc 0
+expect_file_has "$AUTH" "ssh-ed25519 AAAAOTHER me@laptop"
+expect_file_has "$AUTH" "$(ssh_line 8787 $SSH_KEY)"
+expect_mode "$AUTH" 600
+
+# Run again: the line is there already, so nothing is added twice.
+run_case "ssh: the line is there already" STUB_OS=Darwin AUTHKEYS="$(ssh_line 8787 $SSH_KEY)" -- --ssh --ssh-key $SSH_KEY --yes
+expect_rc 0
+expect_out "has the line already"
+if [ "$(grep -c "$SSH_KEY" "$sandbox/home/$AUTH")" = 1 ]; then ok; else bad "the line was added twice"; fi
+
+# An earlier run for another port: its line is replaced, not kept next to the new one.
+run_case "ssh: the line of an earlier run is replaced" STUB_OS=Darwin AUTHKEYS="ssh-ed25519 AAAAOTHER me@laptop
+$(ssh_line 9999 $SSH_KEY)" -- --ssh --ssh-key $SSH_KEY --yes
+expect_rc 0
+expect_file_has "$AUTH" "ssh-ed25519 AAAAOTHER me@laptop"
+expect_file_has "$AUTH" "$(ssh_line 8787 $SSH_KEY)"
+expect_file_lacks "$AUTH" "127.0.0.1:9999"
+if [ "$(grep -c "$SSH_KEY" "$sandbox/home/$AUTH")" = 1 ]; then ok; else bad "the old line is still there"; fi
+
+# Another key of this script stays: each machine has its own.
+run_case "ssh: the line for another key stays" STUB_OS=Darwin AUTHKEYS="$(ssh_line 8787 $SSH_KEY2)" -- --ssh --ssh-key $SSH_KEY --yes
+expect_rc 0
+expect_file_has "$AUTH" "$(ssh_line 8787 $SSH_KEY2)"
+expect_file_has "$AUTH" "$(ssh_line 8787 $SSH_KEY)"
+
+# A line of the user's own that lets the key in: left as it is, no second line.
+run_case "ssh: a line of the user's own holds the key" STUB_OS=Darwin AUTHKEYS="ssh-ed25519 $SSH_KEY mine" -- --ssh --ssh-key $SSH_KEY --yes
+expect_rc 0
+expect_file_lacks "$AUTH" "dogr-phone"
+expect_out "through a line of yours"
+
+# The port of Collie and of the SSH server show in the line and in the link.
+run_case "ssh: other ports" STUB_OS=Darwin ENVFILE="COLLIE_PORT=9000" -- --ssh-port 2222 --ssh-key $SSH_KEY --yes
+expect_rc 0
+expect_called "nc -z 127.0.0.1 2222"
+expect_file_has "$AUTH" "$(ssh_line 9000 $SSH_KEY)"
+expect_env_line "COLLIE_PUBLIC_HOSTS=127.0.0.1:9000"
+expect_env_line "COLLIE_PUBLIC_URL=$(ssh_url 2222 $SSH_FP_LINK 9000)"
+
+# A computer with no ed25519 host key (or no ssh-keygen): the link says "none" and the phone asks about the key itself.
+run_case "ssh: no host key file" STUB_OS=Darwin NO_HOSTKEY=1 -- --ssh --yes
+expect_rc 0
+expect_not_called "ssh-keygen"
+expect_env_line "COLLIE_PUBLIC_URL=$(ssh_url 22 none 8787)"
+run_case "ssh: no ssh-keygen" STUB_OS=Darwin NO_KEYGEN=1 -- --ssh --yes
+expect_rc 0
+expect_env_line "COLLIE_PUBLIC_URL=$(ssh_url 22 none 8787)"
+run_case "ssh: a fingerprint of the wrong length" STUB_OS=Darwin STUB_SSH_FP=short -- --ssh --yes
+expect_rc 0
+expect_env_line "COLLIE_PUBLIC_URL=$(ssh_url 22 none 8787)"
+
+# Collie must listen on loopback for this route.
+run_case "ssh: COLLIE_HOST is brought back to loopback" STUB_OS=Darwin ENVFILE="COLLIE_HOST=0.0.0.0" -- --ssh --yes
+expect_rc 0
+expect_env_line "COLLIE_HOST=127.0.0.1"
+
+# No SSH server: a warning with the way to turn it on, never a stop (it may listen on one address only).
+run_case "ssh: nothing answers on the port (macOS)" STUB_OS=Darwin STUB_SSHD=down -- --ssh --yes
+expect_rc 0
+expect_out "nothing answers on port 22"
+expect_out "Remote Login"
+expect_out "Remember: nothing answered"
+run_case "ssh: nothing answers on the port (Linux)" STUB_OS=Linux STUB_SSHD=down LINUX=1 -- --ssh --yes
+expect_rc 0
+expect_out "systemctl enable --now ssh"
+run_case "ssh: no nc, no check" STUB_OS=Darwin NO_NC=1 -- --ssh --yes
+expect_rc 0
+expect_no_out "nothing answers"
+
+# Values that cannot be used stop the script before anything changes.
+run_case "ssh: a key with the wrong start" STUB_OS=Darwin -- --ssh --ssh-key AAAAB3NzaC1yc2EAAAADAQABAAABAQC7abcdefghijklmnopqrstuvwx --yes
+expect_rc 1
+expect_out "ssh-ed25519"
+expect_not_called "collie start"
+run_case "ssh: a key with the wrong length" STUB_OS=Darwin -- --ssh --ssh-key AAAAC3NzaC1lZDI1NTE5AAAAIshort --yes
+expect_rc 1
+expect_out "68 characters"
+run_case "ssh: a key with spaces in it" STUB_OS=Darwin -- --ssh --ssh-key "ssh-ed25519 $SSH_KEY" --yes
+expect_rc 1
+run_case "ssh: a key is never echoed back" STUB_OS=Darwin -- --ssh --ssh-key "secret-password-1234" --yes
+expect_rc 1
+expect_no_out "secret-password-1234"
+run_case "ssh: port zero" STUB_OS=Darwin -- --ssh --ssh-port 0 --yes
+expect_rc 1
+expect_out "--ssh-port needs a number"
+run_case "ssh: port too big" STUB_OS=Darwin -- --ssh --ssh-port 70000 --yes
+expect_rc 1
+run_case "ssh: port is not a number" STUB_OS=Darwin -- --ssh --ssh-port abc --yes
+expect_rc 1
+run_case "ssh: --ssh-port needs a value" -- --ssh --ssh-port
+expect_rc 1
+expect_out "--ssh-port needs a value"
+run_case "ssh: --ssh-key needs a value" -- --ssh --ssh-key
+expect_rc 1
+expect_out "--ssh-key needs a value"
+expect_no_file "$AUTH"
+
+# One way at a time, the question takes the number and the word, and the help names the route.
+run_case "ssh: two ways at once" -- --ssh --iroh
+expect_rc 1
+expect_out "choose one way"
+run_case "ssh: two ways at once, the other way round" -- --proxy --url https://collie.example.com --ssh-port 22
+expect_rc 1
+expect_out "choose one way"
+run_case "ssh: the route question takes 5" STUB_OS=Darwin ASK=n,5,y --
+expect_rc 0
+expect_out "5) through SSH"
+expect_env_line "COLLIE_PUBLIC_URL=$(ssh_url 22 $SSH_FP_LINK 8787)"
+run_case "ssh: the route question takes the word too" STUB_OS=Darwin ASK=n,ssh,y --
+expect_rc 0
+expect_env_line "COLLIE_SKIP_SERVE=1"
+run_case "help names the ssh route" -- --help
+expect_rc 0
+expect_out "--ssh-key"
+expect_out "authorized_keys"
+expect_out "--ssh-port"
 
 # ---- download progress ----------------------------------------------------------------------------------------------------
 # The installers (Collie's, herdr's, herdr-core's) download quietly. setup.sh puts a small `curl` in front of them that draws
