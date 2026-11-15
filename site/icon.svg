@@ -1,5 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 32 32">
-<rect width="32" height="32" fill="#86BFA9"/>
+<!-- Use the approved lighter mint while keeping every original head path unchanged. -->
+<rect width="32" height="32" fill="#97C9B5"/>
 <g shape-rendering="crispEdges">
 <path fill="#23413B" d="M5 4H8V5H10V7H12V8H20V7H22V5H24V4H27V13H28V16H29V21H27V24H25V26H22V27H10V26H7V24H5V21H3V16H4V13H5Z"/>
 <path fill="#DA8A4E" d="M6 6H8V8H10V10H12V9H20V10H22V8H24V6H26V14H27V17H28V20H26V23H24V25H21V26H11V25H8V23H6V20H4V17H5V14H6Z"/>
