@@ -271,15 +271,20 @@ function alternates() {
 }
 
 /**
- * The list items of the language menu. Every link goes to the fixed address of a language, which the Worker never redirects.
+ * The list items of the language menu as the page ships them: English and the language of the page, nothing else. The
+ * languages that are likely for the visitor (the browser's, the one guessed from the country) are added by page.js when the
+ * menu is opened. Every link goes to the fixed address of a language, which the Worker never redirects.
  * @param {string} current Code of the page being built; its link is marked as the current one.
  * @returns {string} The `<li>` lines.
  */
-function languageItems(current) {
-  return LANGUAGES.map(({ code, name, html }) => {
-    const mark = code === current ? ' aria-current="true"' : "";
-    return `        <li><a href="${pathOf(code)}" lang="${html}" hreflang="${html}" data-code="${code}"${mark}>${name}</a></li>`;
-  }).join("\n");
+export function languageItems(current) {
+  const shown = LANGUAGES.filter(({ code }) => code === current || code === "en");
+  return shown
+    .map(({ code, name, html }) => {
+      const mark = code === current ? ' aria-current="true"' : "";
+      return `        <li><a href="${pathOf(code)}" lang="${html}" hreflang="${html}" data-code="${code}"${mark}>${name}</a></li>`;
+    })
+    .join("\n");
 }
 
 /**

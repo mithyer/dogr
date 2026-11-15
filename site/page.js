@@ -1,7 +1,8 @@
 // Script of the dogr.dev home page. The page works without it: the command can be selected by hand, and the language menu is a
-// plain <details> that lists every language as an ordinary link. This script only adds three small things:
+// plain <details> that lists English and the language of the page as ordinary links. This script only adds three small things:
 //   1. the Copy button of the install command,
-//   2. a "Suggested" part at the top of the language menu (the browser's language, a guess from the country, and English),
+//   2. the languages that are likely for this visitor, added to the language menu when it is opened: the browser's language
+//      and the one guessed from the country (the menu never lists the other languages),
 //   3. a cookie that remembers a language, written only when the visitor clicks one in the menu.
 // It loads nothing from other sites. The country guess is asked from this site's own Worker (/_geo), and only when the menu is opened.
 // TEST:tests/site.test.mjs covers the rules in lang.js; this file is checked by hand in a browser.
@@ -31,9 +32,7 @@ if (menu) setUpLanguageMenu(menu);
  * @param {HTMLDetailsElement} menu The `<details class="lang">` element.
  */
 function setUpLanguageMenu(menu) {
-  const current = menu.dataset.current;
-  const suggestBox = menu.querySelector(".suggest");
-  const suggestList = suggestBox.querySelector("ul");
+  const list = menu.querySelector("ul");
   let asked = false;
 
   // Any click on a language link remembers the choice, so the root address stops guessing for this visitor.
@@ -53,39 +52,26 @@ function setUpLanguageMenu(menu) {
     }
   });
 
-  // The suggestions are built the first time the menu opens, so a visitor who never opens it costs the Worker nothing.
+  // The likely languages are added the first time the menu opens, so a visitor who never opens it costs the Worker nothing.
+  // The page already lists English and its own language; a language that is listed is never added twice.
   menu.addEventListener("toggle", () => {
     if (!menu.open || asked) return;
     asked = true;
-    show(browserLanguage(), null);
+    add(browserLanguage());
     fetch("/_geo", { credentials: "omit", cache: "no-store" })
       .then((answer) => (answer.ok ? answer.json() : null))
-      .then((data) => show(browserLanguage(), data && isCode(data.language) ? data.language : null))
-      .catch(() => { /* No guess from the country: the rest of the list stands. */ });
+      .then((data) => add(data && isCode(data.language) ? data.language : null))
+      .catch(() => { /* No guess from the country: the list stands as it is. */ });
   });
 
   /**
-   * Fills the "Suggested" part: the browser's language, the guess from the country, then English, each once and never the
-   * language this page is already in.
-   * @param {string | null} browser Code of the first language of the browser that we have, if it is not English or the current one.
-   * @param {string | null} country Code guessed from the country, or null.
+   * Adds one language to the end of the list, unless it is not a language of this site or is already listed.
+   * @param {string | null} code Language code, or null for nothing to add.
    */
-  function show(browser, country) {
-    const codes = [];
-    for (const code of [browser, country, "en"]) {
-      if (code && code !== current && !codes.includes(code)) codes.push(code);
-    }
-    suggestList.replaceChildren(...codes.map(item));
-    suggestBox.hidden = codes.length === 0;
-  }
-
-  /**
-   * Makes one list item for a language.
-   * @param {string} code Language code.
-   * @returns {HTMLLIElement} The item with its link.
-   */
-  function item(code) {
+  function add(code) {
+    if (!code || list.querySelector(`a[data-code="${code}"]`)) return;
     const language = LANGUAGES.find((candidate) => candidate.code === code);
+    if (!language) return;
     const link = document.createElement("a");
     link.href = `/${code}/`;
     link.lang = language.html;
@@ -94,12 +80,12 @@ function setUpLanguageMenu(menu) {
     link.textContent = language.name;
     const entry = document.createElement("li");
     entry.append(link);
-    return entry;
+    list.append(entry);
   }
 }
 
 /**
- * The first language the browser asks for that this site has, other than English (English is always offered separately).
+ * The first language the browser asks for that this site has, other than English (English is always in the list).
  * @returns {string | null} A language code, or null.
  */
 function browserLanguage() {

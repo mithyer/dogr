@@ -173,12 +173,10 @@ h3.sub3 { font-size: 22px; margin: 8px 0 14px; }
 .lang summary::after { content: ""; width: 6px; height: 6px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg) translateY(-2px); margin-left: 2px; }
 .lang[open] summary { background: var(--cream); color: #23413b; }
 .lang .menu { position: absolute; right: 0; top: calc(100% + 8px); z-index: 20; min-width: 200px; max-height: min(70vh, 480px); overflow-y: auto; background: var(--card); border: 2px solid var(--ink); border-radius: 14px; box-shadow: 5px 5px 0 var(--shadow); padding: 10px 6px; }
-.lang .cap { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin: 4px 10px; }
-.lang ul { list-style: none; margin: 0 0 6px; padding: 0; }
+.lang ul { list-style: none; margin: 0; padding: 0; }
 .lang li a { display: block; padding: 7px 10px; border-radius: 8px; text-decoration: none; font-size: 15px; }
 .lang li a:hover, .lang li a:focus-visible { background: var(--mint-soft); }
 .lang li a[aria-current="true"] { font-weight: 800; background: var(--mint-soft); }
-.lang .suggest { border-bottom: 1px solid var(--line); margin-bottom: 6px; }
 
 /* ----- text in other languages: long words may break, and the scripts that do not want tight letter spacing get none ----- */
 h1, h2, h3, p, li, td, th { overflow-wrap: break-word; hyphens: auto; }

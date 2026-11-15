@@ -386,9 +386,10 @@ twelve as the app).
 How a visitor gets a language: `/` looks at the `lang` cookie (set only when someone picks a language in the menu), then at the
 browser's language list, then falls back to English; English is shown at `/` itself, any other language by a temporary
 redirect to `/<code>/`. A page address such as `/de/` is never redirected, so a link always shows what it says (`/en/` is
-the address that always means English). The language menu in the top corner lists all twelve and, when it is opened, suggests
-the browser's language, a language guessed from the visitor's country (`/_geo`, which is only a suggestion and never switches
-the page by itself) and English. The page loads nothing from other sites and stores nothing except the language a visitor picks.
+the address that always means English). The language menu in the top corner does not list every language: it holds English, the
+language of the page, and, once it is opened, the browser's language and a language guessed from the visitor's country (`/_geo`,
+which is only a suggestion and never switches the page by itself). The other languages are still reachable by their address
+(`/de/`, `/ja/`, ...) and are known to search engines. The page loads nothing from other sites and stores nothing except the language a visitor picks.
 
 The script is read from GitHub on every request (through Cloudflare's cache), so a push to `main` needs no new deployment.
 Only a change to `site/`, `lang.js`, `worker.js` or `wrangler.jsonc` has to be deployed, by hand (the build runs first):

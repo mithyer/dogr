@@ -297,7 +297,7 @@ describe("the real site", () => {
     }
   });
 
-  test("each page says its own language, is complete, and links every language", () => {
+  test("each page says its own language, is complete, and offers English", () => {
     for (const { code, html, name } of LANGUAGES) {
       const page = readFileSync(join(out, code, "index.html"), "utf8");
       assert.ok(page.includes(`<html lang="${html}">`), code);
@@ -307,7 +307,10 @@ describe("the real site", () => {
       assert.ok(page.includes('hreflang="x-default" href="https://dogr.dev/"'), code);
       const expectedCanonical = code === "en" ? "https://dogr.dev/" : `https://dogr.dev/${code}/`;
       assert.ok(page.includes(`<link rel="canonical" href="${expectedCanonical}">`), `${code}: canonical`);
-      assert.equal((page.match(/data-code="/g) ?? []).length, 12, `${code}: the menu lists every language`);
+      // The page ships English and its own language only; page.js adds the browser's and the country's when the menu opens.
+      assert.equal((page.match(/data-code="/g) ?? []).length, code === "en" ? 1 : 2, `${code}: the menu lists English and the page's own language only`);
+      assert.ok(page.includes('data-code="en"'), `${code}: English is always in the menu`);
+      assert.ok(!page.includes('class="suggest"'), `${code}: no separate group of suggestions`);
       assert.equal((page.match(/aria-current="true"/g) ?? []).length, 1, `${code}: exactly one current language`);
       assert.ok(page.includes(`<span>${name}</span>`), `${code}: the button shows the language name`);
       assert.ok(page.includes(`data-current="${code}"`), code);

@@ -37,14 +37,13 @@
     <a href="#feedback">{{nav.feedback}}</a>
   </nav>
   <span class="pill">{{pill.early}}</span>
-  <!-- The language menu is a plain <details>: it opens and lists every language without any script. page.js only adds the
-       "suggested" part and writes the cookie when a language is picked. -->
-  <details class="lang" data-current="{{$code}}" data-all-label="{{@lang.all}}">
+  <!-- The language menu is a plain <details>. Without any script it lists English and the language of this page, nothing more.
+       page.js adds the languages that are likely for this visitor (the browser's and the one guessed from the country) when
+       the menu is opened, and writes the cookie when a language is picked. -->
+  <details class="lang" data-current="{{$code}}">
     <summary aria-label="{{@lang.label}}"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg><span>{{$name}}</span></summary>
     <div class="menu">
-      <div class="suggest" hidden><p class="cap">{{lang.suggested}}</p><ul></ul></div>
-      <p class="cap">{{lang.all}}</p>
-      <ul class="all">
+      <ul>
 {{$languages}}
       </ul>
     </div>
