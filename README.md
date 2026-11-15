@@ -370,20 +370,35 @@ To forget a paired phone without removing Collie, run `collie devices list`, the
 ## The dogr.dev site
 
 `https://dogr.dev` is a Cloudflare Worker with static files. It is not part of what `setup.sh` installs; it only gives the
-script a short address and the project a home page.
+script a short address and the project a home page. The home page is written once and built in twelve languages (the same
+twelve as the app).
 
 | File | What it is |
 | --- | --- |
-| `site/index.html`, `site/icon.svg` | The home page and its icon, served as plain files |
-| `worker.js` | Answers only `/setup.sh`: it passes through the script on the `main` branch of this repository (kept for 60 seconds), and answers with an error status instead of anything that does not start with `#!/bin/sh`, so a broken answer never reaches `| sh` |
-| `wrangler.jsonc` | Names the Worker `dogr-site`, points it at `site/`, sends only `/setup.sh` to `worker.js`, and attaches the domain `dogr.dev` |
+| `site/page.html` | The page template. `{{key}}` is replaced by a string of the language, `{{@key}}` by the same string as plain text (for attributes) |
+| `site/i18n/strings.csv` | Every text of the page, one row per key, one column per language (`key,en,de,es,ko,ja,zh,zh-TW,ru,it,fr,pt,tr`, the order of the app's table). Edit this file, never the generated pages |
+| `site/style.css`, `site/page.js`, `site/icon.svg`, `site/img/` | Styles, the copy buttons and the language menu, the icon and the screenshots |
+| `lang.js` | The twelve languages and the rules that pick one (cookie, then `Accept-Language`, then English; a country to a language). Used by the Worker, the build and the page |
+| `build-site.mjs` | Builds `dist/` (git-ignored): one page per language at `/<code>/`, `sitemap.xml`, `robots.txt` and the files above. It refuses to build when a language lacks a key, has a key too many, an empty text, other markup than English or another number |
+| `worker.js` | Answers `/setup.sh` (passes through the script on the `main` branch of this repository, kept for 60 seconds; anything that does not start with `#!/bin/sh` becomes an error status, so a broken answer never reaches `\| sh`), `/` (sends the visitor to the page in their language) and `/_geo` (a language suggested by the country of the request, nothing else) |
+| `wrangler.jsonc` | Names the Worker `dogr-site`, runs `node build-site.mjs` before every deploy, serves `dist/`, sends only `/setup.sh`, `/` and `/_geo` to `worker.js`, and attaches the domain `dogr.dev` |
+
+How a visitor gets a language: `/` looks at the `lang` cookie (set only when someone picks a language in the menu), then at the
+browser's language list, then falls back to English; English is shown at `/` itself, any other language by a temporary
+redirect to `/<code>/`. A page address such as `/de/` is never redirected, so a link always shows what it says (`/en/` is
+the address that always means English). The language menu in the top corner lists all twelve and, when it is opened, suggests
+the browser's language, a language guessed from the visitor's country (`/_geo`, which is only a suggestion and never switches
+the page by itself) and English. The page loads nothing from other sites and stores nothing except the language a visitor picks.
 
 The script is read from GitHub on every request (through Cloudflare's cache), so a push to `main` needs no new deployment.
-Only a change to `site/`, `worker.js` or `wrangler.jsonc` has to be deployed, by hand:
+Only a change to `site/`, `lang.js`, `worker.js` or `wrangler.jsonc` has to be deployed, by hand (the build runs first):
 
 ```sh
 npx wrangler@4 deploy
 ```
+
+To look at it first: `node build-site.mjs`, then `npx wrangler@4 dev --local --port 8799`. The country suggestion needs the
+real Cloudflare network (`/_geo` answers `null` locally).
 
 The GitHub address of the script (`https://raw.githubusercontent.com/mithyer/dogr/main/setup.sh`) keeps working, because earlier
 versions of the app show it, and it stays the fallback. To take the site down, delete the Worker `dogr-site`
@@ -406,6 +421,8 @@ given, settings added, replaced or already there, a wide bind from an earlier ru
 the tailcat route (macOS with Homebrew and Linux with a downloaded release for three processors, a wrong or unlisted checksum, no Homebrew, a key that exists or fails to be made, a region or relay map, the service not starting or printing no address, an old log that must not be trusted, another port, settings already there or older, Collie not reading them; where the system has `plutil` it also checks that the launchd file is a valid property list),
 the iroh route (macOS and Linux for two processors, a processor with no release, a wrong checksum, a failed download, a dumbpipe that is installed, too old or lacks `--custom-alpn`, a relay address that is refused or passed on to the service (and the build of a dumbpipe that has `--relay`, with and without `cargo`), saved secrets that are used again or replaced when malformed, file modes, a ticket that cannot be read, a service that prints no ticket, an old log that must not be trusted, a ticket of another key, a relay that cannot be reached, a service that does not start, another port, settings already there or older, Collie not reading them, and the questions and options that lead to it; the secrets are checked to appear in no output and not in the runner),
 the SSH route (the line added, replaced or already there, other lines kept, a key that is refused, other ports, no host key, SSH not answering, the key never printed), the Tailscale route refusing leftovers, answering at the terminal, no terminal, wrong options, running through a pipe, a download that stops half way, and the progress line (drawn when asked, quiet without a terminal or with `DOGR_PROGRESS=never`, the size in megabytes, a server that gives no length, small files, a failing download, both orders of `-o` and the address). `shellcheck` runs too when it is installed.
+
+The site has its own tests (the language rules, the string table and its checks, the build, and the Worker with a stand-in for the static files): `node --test tests/site.test.mjs`.
 
 ## What has and has not been checked
 

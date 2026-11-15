@@ -1,0 +1,300 @@
+<!doctype html>
+<!--
+  TEMPLATE of the dogr.dev home page. build-site.mjs writes one finished page per language from this file and the strings in
+  site/i18n/<code>.json (English is the reference; every other file must have exactly the same keys).
+    {{key}}    a string from the language file, put in as HTML (it may carry the few tags the English text carries: a, strong, span)
+    {{@key}}   a string put in as an attribute value or plain text (escaped)
+    {{$name}}  a value the build script computes (language, addresses, the menu)
+  All comments in this file are removed from the finished pages.
+-->
+<html lang="{{$html}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{@meta.title}}</title>
+<meta name="description" content="{{@meta.description}}">
+<link rel="canonical" href="{{$canonical}}">
+{{$alternates}}
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Dogr">
+<meta property="og:url" content="{{$canonical}}">
+<meta property="og:locale" content="{{$locale}}">
+<meta property="og:title" content="{{@meta.title}}">
+<meta property="og:description" content="{{@hero.tagline}}">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+<!-- TODO before release: og:image (1200x630), apple-touch-icon (180 px PNG), favicon.ico, and the apple-itunes-app banner once the app has an id. -->
+</head>
+<body>
+
+<header class="wrap top">
+  <a class="brand" href="{{$path}}"><img src="/icon.svg" alt="">Dogr<span class="for">{{brand.for}}</span></a>
+  <nav aria-label="{{@nav.label}}">
+    <a href="#experience">{{nav.experience}}</a>
+    <a href="#connect">{{nav.connect}}</a>
+    <a href="#compare">{{nav.compare}}</a>
+    <a href="#start">{{nav.start}}</a>
+    <a href="#feedback">{{nav.feedback}}</a>
+  </nav>
+  <span class="pill">{{pill.early}}</span>
+  <!-- The language menu is a plain <details>: it opens and lists every language without any script. page.js only adds the
+       "suggested" part and writes the cookie when a language is picked. -->
+  <details class="lang" data-current="{{$code}}" data-all-label="{{@lang.all}}">
+    <summary aria-label="{{@lang.label}}"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg><span>{{$name}}</span></summary>
+    <div class="menu">
+      <div class="suggest" hidden><p class="cap">{{lang.suggested}}</p><ul></ul></div>
+      <p class="cap">{{lang.all}}</p>
+      <ul class="all">
+{{$languages}}
+      </ul>
+    </div>
+  </details>
+</header>
+
+<main>
+
+<!-- ============ hero ============ -->
+<section class="hero">
+  <div class="wrap grid">
+    <div>
+      <p class="eyebrow">{{hero.eyebrow}}</p>
+      <h1><span class="name">Dogr</span><span class="for">{{hero.for}}</span></h1>
+      <p class="tagline">{{hero.tagline}}</p>
+      <p class="sub">{{hero.sub}}</p>
+      <div class="badges">
+        <span class="pill">Herdr TUI</span>
+        <span class="pill">herdr-core</span>
+        <span class="pill">iPhone</span>
+        <span class="pill">iPad</span>
+      </div>
+      <div class="cta">
+        <!-- RESERVED: replace with Apple's official "Download on the App Store" badge linking to https://dogr.dev/get once the app is out. -->
+        <span class="btn soon" aria-disabled="true">{{hero.soon}}</span>
+        <a class="btn ghost" href="#compare">{{hero.compare}}</a>
+      </div>
+      <p class="fine">{{hero.fine}}</p>
+    </div>
+    <figure class="shot phone">
+      <div class="frame"><img src="/img/iphone-terminal.jpg" width="900" height="1956" alt="{{@hero.alt}}"></div>
+    </figure>
+  </div>
+</section>
+
+<!-- ============ made for herdr ============ -->
+<section class="band" id="herdr">
+  <div class="wrap">
+    <p class="eyebrow">{{herdr.eyebrow}}</p>
+    <h2>{{herdr.h2}}</h2>
+    <p class="intro">{{herdr.intro}}</p>
+    <div class="cards">
+      <div class="card"><h3>{{herdr.c1.h}}</h3><p>{{herdr.c1.p}}</p></div>
+      <div class="card"><h3>{{herdr.c2.h}}</h3><p>{{herdr.c2.p}}</p></div>
+      <div class="card"><h3>{{herdr.c3.h}}</h3><p>{{herdr.c3.p}}</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ experience ============ -->
+<section id="experience">
+  <div class="wrap">
+    <p class="eyebrow">{{exp.eyebrow}}</p>
+    <h2>{{exp.h2}}</h2>
+    <div class="rule"><p>{{exp.rule}}</p></div>
+
+    <div class="row">
+      <div class="text">
+        <h3>{{r1.h}}</h3>
+        <p>{{r1.p}}</p>
+        <ul>
+          <li>{{r1.li1}}</li>
+          <li>{{r1.li2}}</li>
+        </ul>
+      </div>
+      <figure class="shot phone"><div class="frame"><img src="/img/iphone-spaces.jpg" width="900" height="1956" alt="{{@r1.alt}}" loading="lazy"></div></figure>
+    </div>
+
+    <div class="row flip">
+      <div class="text">
+        <h3>{{r2.h}}</h3>
+        <p>{{r2.p1}}</p>
+        <p>{{r2.p2}}</p>
+      </div>
+      <figure class="shot phone"><div class="frame"><img src="/img/iphone-question.jpg" width="900" height="1956" alt="{{@r2.alt}}" loading="lazy"></div></figure>
+    </div>
+
+    <div class="row">
+      <div class="text">
+        <h3>{{r3.h}}</h3>
+        <p>{{r3.p}}</p>
+      </div>
+      <figure class="shot phone"><div class="frame"><img src="/img/iphone-chat.jpg" width="900" height="1956" alt="{{@r3.alt}}" loading="lazy"></div></figure>
+    </div>
+
+    <div class="row solo">
+      <div class="text">
+        <h3>{{r4.h}}</h3>
+        <p>{{r4.p}}</p>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="text">
+        <h3>{{r5.h}}</h3>
+        <ul>
+          <li>{{r5.li1}}</li>
+          <li>{{r5.li2}}</li>
+          <li>{{r5.li3}}</li>
+          <li>{{r5.li4}}</li>
+        </ul>
+      </div>
+      <figure class="shot pad"><div class="frame"><img src="/img/ipad-panels.jpg" width="1600" height="1034" alt="{{@r5.alt}}" loading="lazy"></div></figure>
+    </div>
+  </div>
+</section>
+
+<!-- ============ connect ============ -->
+<section class="band" id="connect">
+  <div class="wrap">
+    <p class="eyebrow">{{connect.eyebrow}}</p>
+    <h2>{{connect.h2}}</h2>
+    <p class="intro">{{connect.intro}}</p>
+    <div class="routes">
+      <div class="route"><h3>Tailscale</h3><p>{{route.tailscale}}</p></div>
+      <div class="route"><h3>Tailcat</h3><p>{{route.tailcat}}</p></div>
+      <div class="route"><h3>Iroh</h3><p>{{route.iroh}}</p></div>
+      <div class="route"><h3>SSH</h3><p>{{route.ssh}}</p></div>
+      <div class="route"><h3>{{route.proxy.h}}</h3><p>{{route.proxy.p}}</p></div>
+      <div class="route"><h3>{{route.wifi.h}}</h3><p>{{route.wifi.p}}</p></div>
+    </div>
+    <p class="fine">{{connect.fine}}</p>
+  </div>
+</section>
+
+<!-- ============ compare ============ -->
+<section id="compare">
+  <div class="wrap">
+    <p class="eyebrow">{{cmp.eyebrow}}</p>
+    <h2>{{cmp.h2}}</h2>
+    <p class="intro">{{cmp.intro}}</p>
+
+    <h3 class="sub3">{{cmp.sub1}}</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>&nbsp;</th><th>Dogr</th><th>{{col.herdr}}</th></tr></thead>
+        <tbody>
+          <tr><td>Herdr TUI</td><td class="us" data-label="Dogr">{{a1.d}}</td><td data-label="{{@col.herdr}}">{{a1.h}}</td></tr>
+          <tr><td>{{a2.f}}</td><td class="us" data-label="Dogr">{{a2.d}}</td><td data-label="{{@col.herdr}}">{{a2.h}}</td></tr>
+          <tr><td>{{a3.f}}</td><td class="us" data-label="Dogr">12</td><td data-label="{{@col.herdr}}">{{a3.h}}</td></tr>
+          <tr><td>{{a4.f}}</td><td class="us" data-label="Dogr">{{a4.d}}</td><td data-label="{{@col.herdr}}">{{a4.h}}</td></tr>
+          <tr><td>{{a5.f}}</td><td class="us" data-label="Dogr">{{a5.d}}</td><td data-label="{{@col.herdr}}">{{a5.h}}</td></tr>
+          <tr><td>{{a6.f}}</td><td class="us" data-label="Dogr">{{a6.d}}</td><td class="unk" data-label="{{@col.herdr}}">{{cmp.unlisted}}</td></tr>
+          <tr><td>{{a7.f}}</td><td class="us" data-label="Dogr">{{a7.d}}</td><td class="unk" data-label="{{@col.herdr}}">{{cmp.unlisted}}</td></tr>
+          <tr><td>{{a8.f}}</td><td class="us" data-label="Dogr">{{a8.d}}</td><td class="unk" data-label="{{@col.herdr}}">{{cmp.unlisted}}</td></tr>
+          <tr><td>{{a9.f}}</td><td class="us" data-label="Dogr">{{a9.d}}</td><td data-label="{{@col.herdr}}">{{a9.h}}</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 class="sub3">{{cmp.sub2}}</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>&nbsp;</th><th>Dogr</th><th>{{col.herdr}}</th></tr></thead>
+        <tbody>
+          <tr><td>Android</td><td class="us" data-label="Dogr">{{b1.d}}</td><td data-label="{{@col.herdr}}"><span class="yes">{{cmp.yes}}</span></td></tr>
+          <tr><td>{{b2.f}}</td><td class="us" data-label="Dogr">{{b2.d}}</td><td data-label="{{@col.herdr}}"><span class="yes">{{cmp.yes}}</span></td></tr>
+          <tr><td>{{b3.f}}</td><td class="us" data-label="Dogr">{{b3.d}}</td><td data-label="{{@col.herdr}}">{{b3.h}}</td></tr>
+          <tr><td>{{b4.f}}</td><td class="us" data-label="Dogr">{{b4.d}}</td><td data-label="{{@col.herdr}}">{{b4.h}}</td></tr>
+          <tr><td>{{b5.f}}</td><td class="us" data-label="Dogr">{{b5.d}}</td><td data-label="{{@col.herdr}}">{{b5.h}}</td></tr>
+          <tr><td>{{b6.f}}</td><td class="us" data-label="Dogr">{{b6.d}}</td><td data-label="{{@col.herdr}}">{{b6.h}}</td></tr>
+          <tr><td>{{b7.f}}</td><td class="us" data-label="Dogr">{{b7.d}}</td><td data-label="{{@col.herdr}}">{{b7.h}}</td></tr>
+          <tr><td>{{b8.f}}</td><td class="us" data-label="Dogr">{{b8.d}}</td><td data-label="{{@col.herdr}}">{{b8.h}}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="fine">{{cmp.fine}}</p>
+  </div>
+</section>
+
+<!-- ============ get started ============ -->
+<section class="band" id="start">
+  <div class="wrap">
+    <p class="eyebrow">{{start.eyebrow}}</p>
+    <h2>{{start.h2}}</h2>
+    <div class="steps">
+      <div class="step"><h3>{{s1.h}}</h3><p>{{s1.p}}</p></div>
+      <div class="step"><h3>{{s2.h}}</h3><p>{{s2.p}}</p></div>
+      <div class="step"><h3>{{s3.h}}</h3><p>{{s3.p}}</p></div>
+    </div>
+    <div class="cmd">
+      <pre>curl -fsSL https://dogr.dev/setup.sh | sh</pre>
+      <button type="button" data-copy="curl -fsSL https://dogr.dev/setup.sh | sh" data-copied="{{@start.copied}}">{{start.copy}}</button>
+    </div>
+    <p class="fine">{{start.fine}}</p>
+  </div>
+</section>
+
+<!-- ============ author ============ -->
+<section id="author">
+  <div class="wrap author">
+    <img src="/icon.svg" alt="{{@author.alt}}">
+    <blockquote>
+      <p>{{author.p1}}</p>
+      <p>{{author.p2}}</p>
+      <p>{{author.p3}}</p>
+    </blockquote>
+  </div>
+</section>
+
+<!-- ============ feedback ============ -->
+<section class="band" id="feedback">
+  <div class="wrap">
+    <p class="eyebrow">{{fb.eyebrow}}</p>
+    <h2>{{fb.h2}}</h2>
+    <p class="intro">{{fb.intro}}</p>
+    <div class="channels">
+      <div class="channel"><h3>{{fb.c1.h}}</h3><p>{{fb.c1.p}}</p></div>
+      <div class="channel"><h3>{{fb.c2.h}}</h3><p>{{fb.c2.p}}</p></div>
+      <div class="channel"><h3>{{fb.c3.h}}</h3><p>{{fb.c3.p}}</p></div>
+      <!-- RESERVED: a fourth channel, a public place to discuss (GitHub Discussions on the dogr repository), once it is switched on. -->
+    </div>
+    <p class="next">{{fb.next}}</p>
+  </div>
+</section>
+
+<!-- ============ download (reserved) ============ -->
+<section id="download">
+  <div class="wrap">
+    <div class="download">
+      <div>
+        <h2>{{dl.h2}}</h2>
+        <p>{{dl.p}}</p>
+        <!-- RESERVED: Apple's official badge goes here, linking to https://dogr.dev/get -->
+        <span class="btn soon" aria-disabled="true">{{hero.soon}}</span>
+      </div>
+      <!-- RESERVED: the QR code of https://dogr.dev/get (a static SVG made locally). Hidden on small screens. -->
+      <figure class="qrbox">
+        <div class="qr">{{dl.qr}}</div>
+        <figcaption>{{dl.scan}}</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="mailto:fb@dogr.dev">fb@dogr.dev</a>
+      <a href="https://github.com/mithyer/dogr">{{footer.setup}}</a>
+      <a href="https://github.com/mithyer">{{footer.github}}</a>
+    </div>
+    <p>{{footer.indep}}</p>
+    <p>{{footer.privacy}}</p>
+    <p>{{footer.geo}}</p>
+  </div>
+</footer>
+
+<script type="module" src="/page.js"></script>
+</body>
+</html>

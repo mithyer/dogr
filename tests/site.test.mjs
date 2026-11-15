@@ -1,0 +1,508 @@
+// Tests of the dogr.dev site: the language rules (lang.js), the build (build-site.mjs) and the Worker (worker.js).
+// Run from the repository root with:  node --test tests/site.test.mjs
+// No network and no Cloudflare: the Worker is called with plain Request objects and a stand-in for the file store.
+
+import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { after, describe, test } from "node:test";
+import { fileURLToPath } from "node:url";
+
+import { build, checkStrings, loadStrings, parseCsv, placeholdersOf, renderPage, sitemap } from "../build-site.mjs";
+import {
+  COUNTRY_LANGUAGE,
+  LANGUAGES,
+  isCode,
+  languageForCountry,
+  languageFromAccept,
+  languageFromCookie,
+  matchTag,
+  parseAcceptLanguage,
+  pickLanguage,
+} from "../lang.js";
+import worker from "../worker.js";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const TEMPLATE = readFileSync(join(ROOT, "site", "page.html"), "utf8");
+const STRINGS_FILE = join(ROOT, "site", "i18n", "strings.csv");
+
+describe("language table", () => {
+  test("the twelve languages of the app, each code once", () => {
+    assert.equal(LANGUAGES.length, 12);
+    assert.equal(new Set(LANGUAGES.map((language) => language.code)).size, 12);
+    assert.deepEqual(
+      LANGUAGES.map((language) => language.code),
+      ["en", "de", "es", "ko", "ja", "zh", "zh-tw", "ru", "it", "fr", "pt", "tr"],
+    );
+  });
+
+  test("isCode accepts our codes and nothing else", () => {
+    assert.ok(isCode("zh-tw"));
+    assert.ok(!isCode("zh-TW"), "codes are lower case");
+    assert.ok(!isCode("xx"));
+    assert.ok(!isCode(undefined));
+    assert.ok(!isCode(null));
+  });
+});
+
+describe("matchTag", () => {
+  test("plain and regional tags go to the language", () => {
+    assert.equal(matchTag("de"), "de");
+    assert.equal(matchTag("de-CH"), "de");
+    assert.equal(matchTag("EN-us"), "en");
+    assert.equal(matchTag("fr_CA"), "fr");
+    assert.equal(matchTag("ja-JP"), "ja");
+  });
+
+  test("Chinese is split into Simplified and Traditional", () => {
+    assert.equal(matchTag("zh"), "zh");
+    assert.equal(matchTag("zh-CN"), "zh");
+    assert.equal(matchTag("zh-Hans"), "zh");
+    assert.equal(matchTag("zh-SG"), "zh");
+    assert.equal(matchTag("zh-TW"), "zh-tw");
+    assert.equal(matchTag("zh-HK"), "zh-tw");
+    assert.equal(matchTag("zh-MO"), "zh-tw");
+    assert.equal(matchTag("zh-Hant"), "zh-tw");
+    assert.equal(matchTag("zh-Hant-TW"), "zh-tw");
+  });
+
+  test("Portuguese of either country is our Brazilian one", () => {
+    assert.equal(matchTag("pt"), "pt");
+    assert.equal(matchTag("pt-PT"), "pt");
+    assert.equal(matchTag("pt-BR"), "pt");
+  });
+
+  test("anything we do not have gives null", () => {
+    assert.equal(matchTag("*"), null);
+    assert.equal(matchTag(""), null);
+    assert.equal(matchTag("nl"), null);
+    assert.equal(matchTag("sv-SE"), null);
+    assert.equal(matchTag("zh-tw-x"), "zh-tw", "a private-use tail does not matter");
+  });
+});
+
+describe("Accept-Language", () => {
+  test("tags come best first, equal weights keep the written order", () => {
+    assert.deepEqual(parseAcceptLanguage("de;q=0.5, fr, ja;q=0.9, it"), ["fr", "it", "ja", "de"]);
+  });
+
+  test("q=0 means not acceptable", () => {
+    assert.deepEqual(parseAcceptLanguage("de;q=0, fr;q=0.0, ja"), ["ja"]);
+  });
+
+  test("empty and missing headers give nothing", () => {
+    assert.deepEqual(parseAcceptLanguage(""), []);
+    assert.deepEqual(parseAcceptLanguage(undefined), []);
+    assert.deepEqual(parseAcceptLanguage(null), []);
+  });
+
+  test("a bad weight is read as 1 and does not break the rest", () => {
+    assert.deepEqual(parseAcceptLanguage("de;q=abc, fr;q=0.8"), ["de", "fr"]);
+  });
+
+  test("the first language we have wins; English counts", () => {
+    assert.equal(languageFromAccept("de-CH, fr;q=0.8"), "de");
+    assert.equal(languageFromAccept("nl, sv;q=0.8, es;q=0.5"), "es");
+    assert.equal(languageFromAccept("en-US,en;q=0.9,ja;q=0.8"), "en");
+    assert.equal(languageFromAccept("nl, sv"), null);
+    assert.equal(languageFromAccept("*"), null);
+    assert.equal(languageFromAccept(undefined), null);
+  });
+});
+
+describe("cookie and the final choice", () => {
+  test("the cookie is read among others, and only with a valid language", () => {
+    assert.equal(languageFromCookie("a=1; lang=ja; b=2"), "ja");
+    assert.equal(languageFromCookie("lang=zh-tw"), "zh-tw");
+    assert.equal(languageFromCookie("lang=xx"), null);
+    assert.equal(languageFromCookie("lang=ZH"), null);
+    assert.equal(languageFromCookie("language=ja"), null);
+    assert.equal(languageFromCookie(""), null);
+    assert.equal(languageFromCookie(undefined), null);
+  });
+
+  test("what the visitor picked beats the browser, the browser beats the default", () => {
+    assert.equal(pickLanguage({ cookie: "lang=en", accept: "de" }), "en");
+    assert.equal(pickLanguage({ cookie: "lang=ja", accept: "en" }), "ja");
+    assert.equal(pickLanguage({ cookie: "lang=bogus", accept: "fr" }), "fr");
+    assert.equal(pickLanguage({ cookie: null, accept: "nl" }), "en");
+    assert.equal(pickLanguage({}), "en");
+  });
+});
+
+describe("country guess", () => {
+  test("known countries", () => {
+    assert.equal(languageForCountry("CN"), "zh");
+    assert.equal(languageForCountry("TW"), "zh-tw");
+    assert.equal(languageForCountry("HK"), "zh-tw");
+    assert.equal(languageForCountry("JP"), "ja");
+    assert.equal(languageForCountry("kr"), "ko", "lower case is accepted");
+    assert.equal(languageForCountry("DE"), "de");
+    assert.equal(languageForCountry("CH"), "de");
+    assert.equal(languageForCountry("FR"), "fr");
+    assert.equal(languageForCountry("BR"), "pt");
+    assert.equal(languageForCountry("MX"), "es");
+    assert.equal(languageForCountry("RU"), "ru");
+    assert.equal(languageForCountry("TR"), "tr");
+  });
+
+  test("no guess for the rest, for Tor and for unknown", () => {
+    assert.equal(languageForCountry("US"), null);
+    assert.equal(languageForCountry("T1"), null);
+    assert.equal(languageForCountry("XX"), null);
+    assert.equal(languageForCountry(undefined), null);
+    assert.equal(languageForCountry(null), null);
+  });
+
+  test("every country in the table points at a language we have", () => {
+    for (const [country, code] of Object.entries(COUNTRY_LANGUAGE)) {
+      assert.match(country, /^[A-Z]{2}$/);
+      assert.ok(isCode(code), `${country} -> ${code}`);
+    }
+  });
+});
+
+describe("string checks", () => {
+  const template = "<p>{{a}}</p><img alt=\"{{@b}}\"><p>{{c}}</p>";
+  const english = {
+    a: "Hello <a href=\"/x\">link</a>",
+    b: "Picture",
+    c: "Version 17.5 and 12 languages",
+  };
+  const good = () => ({ en: { ...english }, de: { a: "Hallo <a href=\"/x\">Link</a>", b: "Bild", c: "Version 17.5 und 12 Sprachen" } });
+
+  test("a matching set has no problem", () => {
+    assert.deepEqual(checkStrings(good(), template), []);
+  });
+
+  test("a missing key, an extra key and a key nobody uses are found", () => {
+    const strings = good();
+    delete strings.de.b;
+    strings.de.extra = "x";
+    assert.ok(checkStrings(strings, template).some((line) => line.includes('de: missing "b"')));
+    assert.ok(checkStrings(strings, template).some((line) => line.includes('de: "extra" is not in the English column')));
+    const unused = { ...good(), en: { ...english, spare: "s" }, de: { ...good().de, spare: "s" } };
+    assert.ok(checkStrings(unused, template).some((line) => line.includes('"spare" is not used by the template')));
+    assert.ok(checkStrings(good(), template + "{{nope}}").some((line) => line.includes('"nope"')));
+  });
+
+  test("changed links, lost numbers, bare ampersands and stray brackets are found", () => {
+    let strings = good();
+    strings.de.a = "Hallo <a href=\"/y\">Link</a>";
+    assert.ok(checkStrings(strings, template).some((line) => line.includes("different tags")));
+    strings = good();
+    strings.de.a = "Hallo Link";
+    assert.ok(checkStrings(strings, template).some((line) => line.includes("different tags")));
+    strings = good();
+    strings.de.c = "Version 17 und zwölf Sprachen";
+    assert.ok(checkStrings(strings, template).some((line) => line.includes("lost the number")));
+    strings = good();
+    strings.de.b = "Bild & Ton";
+    assert.ok(checkStrings(strings, template).some((line) => line.includes("bare &")));
+    strings = good();
+    strings.de.b = "Bild < Ton";
+    assert.ok(checkStrings(strings, template).some((line) => line.includes("stray")));
+    strings = good();
+    strings.de.b = "{{a}}";
+    assert.ok(checkStrings(strings, template).some((line) => line.includes("contains a placeholder")));
+  });
+
+  test("tags may be reordered by a translation", () => {
+    const strings = { en: { a: "<b>x</b> and <i>y</i>" }, de: { a: "<i>y</i> und <b>x</b>" } };
+    assert.deepEqual(checkStrings(strings, "{{a}}"), []);
+  });
+
+  test("a string used as plain text must not carry markup", () => {
+    const strings = { en: { a: "x <b>y</b>" } };
+    assert.ok(checkStrings(strings, "{{@a}}").some((line) => line.includes("plain text but contains markup")));
+  });
+
+  test("the placeholders of a template are sorted by kind, and comments are ignored", () => {
+    const found = placeholdersOf("<!-- {{ignored}} --> {{a}} {{@b}} {{$c}}");
+    assert.deepEqual([...found.html], ["a"]);
+    assert.deepEqual([...found.text], ["b"]);
+    assert.deepEqual([...found.computed], ["c"]);
+  });
+});
+
+describe("the string table (CSV)", () => {
+  test("quoted cells keep commas, doubled quotes and line breaks; blank lines and CRLF are fine", () => {
+    const rows = parseCsv('k,v\r\n"a,b","say ""hi"""\r\n\r\n"two\nlines",x\n');
+    assert.deepEqual(rows, [
+      ["k", "v"],
+      ["a,b", 'say "hi"'],
+      ["two\nlines", "x"],
+    ]);
+  });
+
+  test("the last row needs no line break, and an empty cell stays an empty cell", () => {
+    assert.deepEqual(parseCsv("a,,c"), [["a", "", "c"]]);
+    assert.deepEqual(parseCsv(""), []);
+  });
+
+  /** Writes a table into a scratch folder and loads it. */
+  function load(text) {
+    const dir = mkdtempSync(join(tmpdir(), "dogr-csv-"));
+    try {
+      const file = join(dir, "strings.csv");
+      writeFileSync(file, text);
+      return loadStrings(file);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  const HEADER = "key," + LANGUAGES.map(({ code }) => code).join(",");
+  const row = (key, ...cells) => [key, ...LANGUAGES.map((_, i) => cells[i] ?? `t${i}`)].join(",");
+
+  test("the header may spell zh-TW as the app does, and every language gets its own column", () => {
+    const { strings, problems } = load(`${HEADER.replace("zh-tw", "zh-TW")}\n${row("a")}\n`);
+    assert.deepEqual(problems, []);
+    assert.equal(strings.en.a, "t0");
+    assert.equal(strings["zh-tw"].a, "t6");
+  });
+
+  test("a wrong header, a short row, an empty cell and a repeated key are all reported", () => {
+    assert.ok(load("key,en\na,b\n").problems.some((line) => line.includes("the header must be")));
+    assert.ok(load(`${HEADER}\na,only,three\n`).problems.some((line) => line.includes("cells instead of")));
+    assert.ok(load(`${HEADER}\n${row("a", "")}\n`).problems.some((line) => line.includes('en: "a" is empty')));
+    assert.ok(load(`${HEADER}\n${row("a")}\n${row("a")}\n`).problems.some((line) => line.includes("appears twice")));
+  });
+
+  test("a missing file is a problem, not a crash", () => {
+    assert.ok(loadStrings(join(tmpdir(), "no-such-dogr-strings.csv")).problems.length > 0);
+  });
+});
+
+describe("the real site", () => {
+  const out = mkdtempSync(join(tmpdir(), "dogr-site-"));
+  after(() => rmSync(out, { recursive: true, force: true }));
+
+  test("the string table matches English and the template", () => {
+    const { strings, problems } = loadStrings(STRINGS_FILE);
+    assert.deepEqual(problems, []);
+    assert.deepEqual(checkStrings(strings, TEMPLATE), []);
+  });
+
+  const result = build({ outDir: out });
+
+  test("it builds without problems and writes one page per language", () => {
+    assert.deepEqual(result.problems, []);
+    assert.equal(result.pages.length, 12);
+    for (const { code } of LANGUAGES) {
+      assert.ok(readdirSync(join(out, code)).includes("index.html"), code);
+    }
+    for (const file of ["style.css", "page.js", "lang.js", "icon.svg", "sitemap.xml", "robots.txt"]) {
+      assert.ok(readdirSync(out).includes(file), file);
+    }
+  });
+
+  test("each page says its own language, is complete, and links every language", () => {
+    for (const { code, html, name } of LANGUAGES) {
+      const page = readFileSync(join(out, code, "index.html"), "utf8");
+      assert.ok(page.includes(`<html lang="${html}">`), code);
+      assert.ok(!page.includes("{{"), `${code}: a placeholder is left`);
+      assert.ok(!page.includes("<!--"), `${code}: a comment is left`);
+      assert.equal((page.match(/rel="alternate" hreflang=/g) ?? []).length, 13, `${code}: 12 languages and x-default`);
+      assert.ok(page.includes('hreflang="x-default" href="https://dogr.dev/"'), code);
+      const expectedCanonical = code === "en" ? "https://dogr.dev/" : `https://dogr.dev/${code}/`;
+      assert.ok(page.includes(`<link rel="canonical" href="${expectedCanonical}">`), `${code}: canonical`);
+      assert.equal((page.match(/data-code="/g) ?? []).length, 12, `${code}: the menu lists every language`);
+      assert.equal((page.match(/aria-current="true"/g) ?? []).length, 1, `${code}: exactly one current language`);
+      assert.ok(page.includes(`<span>${name}</span>`), `${code}: the button shows the language name`);
+      assert.ok(page.includes(`data-current="${code}"`), code);
+      assert.ok(page.includes('<a href="/en/" lang="en"'), `${code}: English is always one click away, at its fixed address`);
+    }
+  });
+
+  test("the pages keep the facts that must not change", () => {
+    for (const { code } of LANGUAGES) {
+      const page = readFileSync(join(out, code, "index.html"), "utf8");
+      assert.ok(page.includes("curl -fsSL https://dogr.dev/setup.sh | sh"), `${code}: the command`);
+      assert.ok(page.includes("mailto:fb@dogr.dev"), `${code}: the address`);
+      assert.ok(page.includes("800+"), `${code}: the theme count`);
+      assert.ok(page.includes("data-copied="), `${code}: the copied label`);
+    }
+  });
+
+  test("the sitemap lists every language and the robots file names it", () => {
+    const text = sitemap();
+    assert.equal((text.match(/<loc>/g) ?? []).length, 12);
+    assert.ok(text.includes("<loc>https://dogr.dev/</loc>"));
+    assert.ok(text.includes("<loc>https://dogr.dev/zh-tw/</loc>"));
+    assert.ok(!text.includes("<loc>https://dogr.dev/en/</loc>"), "English is listed once, at the root");
+    assert.equal(readFileSync(join(out, "sitemap.xml"), "utf8"), text);
+    assert.ok(readFileSync(join(out, "robots.txt"), "utf8").includes("Sitemap: https://dogr.dev/sitemap.xml"));
+  });
+
+  test("a page cannot be rendered when the template asks for something that does not exist", () => {
+    const { strings } = loadStrings(STRINGS_FILE);
+    assert.throws(() => renderPage("{{missing.key}}", strings.en, "en"), /missing "missing.key"/);
+    assert.throws(() => renderPage("{{$nope}}", strings.en, "en"), /computed value "nope"/);
+  });
+});
+
+describe("worker: the home page", () => {
+  /** A stand-in for the file store: serves the English page and records what was asked. */
+  function files({ failFirst = false } = {}) {
+    const asked = [];
+    let failed = false;
+    return {
+      asked,
+      ASSETS: {
+        async fetch(request) {
+          asked.push(new URL(request.url).pathname);
+          if (failFirst && !failed) {
+            failed = true;
+            throw new Error("store down");
+          }
+          return new Response("<html>ENGLISH</html>", { headers: { "content-type": "text/html; charset=utf-8", etag: '"abc"' } });
+        },
+      },
+    };
+  }
+
+  /** Builds a request for the home page with the given headers. */
+  function homeRequest(headers = {}, { method = "GET", path = "/" } = {}) {
+    return new Request(`https://dogr.dev${path}`, { method, headers });
+  }
+
+  test("no language information gives the English page itself, not a redirect", async () => {
+    const env = files();
+    const answer = await worker.fetch(homeRequest(), env);
+    assert.equal(answer.status, 200);
+    assert.equal(await answer.text(), "<html>ENGLISH</html>");
+    assert.deepEqual(env.asked, ["/en/"]);
+    assert.equal(answer.headers.get("vary"), "Accept-Language, Cookie");
+    assert.match(answer.headers.get("cache-control"), /private/);
+    assert.equal(answer.headers.get("etag"), '"abc"', "the headers of the page are kept");
+  });
+
+  test("a browser language of ours is a temporary redirect to its page", async () => {
+    const answer = await worker.fetch(homeRequest({ "accept-language": "de-CH,fr;q=0.8" }), files());
+    assert.equal(answer.status, 302);
+    assert.equal(answer.headers.get("location"), "/de/");
+    assert.equal(answer.headers.get("vary"), "Accept-Language, Cookie");
+    assert.match(answer.headers.get("cache-control"), /no-store/);
+  });
+
+  test("the query string survives the redirect", async () => {
+    const answer = await worker.fetch(homeRequest({ "accept-language": "ja" }, { path: "/?utm=a&b=2" }), files());
+    assert.equal(answer.headers.get("location"), "/ja/?utm=a&b=2");
+  });
+
+  test("Traditional Chinese browsers land on the Traditional page", async () => {
+    const answer = await worker.fetch(homeRequest({ "accept-language": "zh-HK,zh;q=0.9,en;q=0.5" }), files());
+    assert.equal(answer.headers.get("location"), "/zh-tw/");
+  });
+
+  test("English first in the browser keeps the English page", async () => {
+    const answer = await worker.fetch(homeRequest({ "accept-language": "en-US,en;q=0.9,ja;q=0.8" }), files());
+    assert.equal(answer.status, 200);
+  });
+
+  test("a language we do not have falls back to English", async () => {
+    const answer = await worker.fetch(homeRequest({ "accept-language": "nl,sv;q=0.7" }), files());
+    assert.equal(answer.status, 200);
+  });
+
+  test("the cookie beats the browser, in both directions", async () => {
+    const toEnglish = await worker.fetch(homeRequest({ "accept-language": "de", cookie: "lang=en" }), files());
+    assert.equal(toEnglish.status, 200, "a German browser that picked English stays on English");
+    const toJapanese = await worker.fetch(homeRequest({ "accept-language": "en", cookie: "x=1; lang=ja" }), files());
+    assert.equal(toJapanese.status, 302);
+    assert.equal(toJapanese.headers.get("location"), "/ja/");
+  });
+
+  test("a cookie that is not a language is ignored", async () => {
+    const answer = await worker.fetch(homeRequest({ "accept-language": "fr", cookie: "lang=../../x" }), files());
+    assert.equal(answer.headers.get("location"), "/fr/");
+  });
+
+  test("HEAD is answered like GET, other methods are refused", async () => {
+    const head = await worker.fetch(homeRequest({}, { method: "HEAD" }), files());
+    assert.equal(head.status, 200);
+    const post = await worker.fetch(homeRequest({}, { method: "POST" }), files());
+    assert.equal(post.status, 405);
+  });
+
+  test("a failing file store is tried once more before giving up", async () => {
+    const env = files({ failFirst: true });
+    const answer = await worker.fetch(homeRequest(), env);
+    assert.equal(answer.status, 200);
+    assert.equal(env.asked.length, 2);
+  });
+
+  test("any other address is a 404", async () => {
+    const answer = await worker.fetch(homeRequest({}, { path: "/nope" }), files());
+    assert.equal(answer.status, 404);
+  });
+});
+
+describe("worker: /_geo", () => {
+  /** A request that carries the country Cloudflare would have put on it. */
+  function geoRequest(country) {
+    const request = new Request("https://dogr.dev/_geo");
+    if (country !== undefined) Object.defineProperty(request, "cf", { value: { country } });
+    return request;
+  }
+
+  test("answers with the language of the country, never the country", async () => {
+    const answer = await worker.fetch(geoRequest("JP"), {});
+    assert.deepEqual(await answer.json(), { language: "ja" });
+    assert.match(answer.headers.get("content-type"), /application\/json/);
+    assert.match(answer.headers.get("cache-control"), /no-store/);
+  });
+
+  test("answers null for an unknown country and when there is no country", async () => {
+    assert.deepEqual(await (await worker.fetch(geoRequest("US"), {})).json(), { language: null });
+    assert.deepEqual(await (await worker.fetch(geoRequest("T1"), {})).json(), { language: null });
+    assert.deepEqual(await (await worker.fetch(geoRequest(undefined), {})).json(), { language: null });
+  });
+});
+
+describe("worker: /setup.sh", () => {
+  const realFetch = globalThis.fetch;
+  after(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  /** Replaces the network with one answer. */
+  function upstream(make) {
+    globalThis.fetch = async () => make();
+  }
+
+  const setupRequest = (method = "GET") => new Request("https://dogr.dev/setup.sh", { method });
+
+  test("a real script is passed through as plain text", async () => {
+    upstream(() => new Response("#!/bin/sh\necho hi\n"));
+    const answer = await worker.fetch(setupRequest(), {});
+    assert.equal(answer.status, 200);
+    assert.equal(await answer.text(), "#!/bin/sh\necho hi\n");
+    assert.match(answer.headers.get("content-type"), /text\/plain/);
+    assert.equal(answer.headers.get("x-content-type-options"), "nosniff");
+  });
+
+  test("something that is not a script never reaches sh", async () => {
+    upstream(() => new Response("<html>error</html>"));
+    const answer = await worker.fetch(setupRequest(), {});
+    assert.equal(answer.status, 502);
+  });
+
+  test("a failed or unreachable upstream is a 502", async () => {
+    upstream(() => new Response("nope", { status: 404 }));
+    assert.equal((await worker.fetch(setupRequest(), {})).status, 502);
+    globalThis.fetch = async () => {
+      throw new Error("offline");
+    };
+    assert.equal((await worker.fetch(setupRequest(), {})).status, 502);
+  });
+
+  test("only GET and HEAD are answered", async () => {
+    upstream(() => new Response("#!/bin/sh\n"));
+    assert.equal((await worker.fetch(setupRequest("POST"), {})).status, 405);
+    const head = await worker.fetch(setupRequest("HEAD"), {});
+    assert.equal(head.status, 200);
+    assert.equal(await head.text(), "");
+  });
+});

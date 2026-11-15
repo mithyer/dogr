@@ -1,3 +1,4 @@
-# Local state of "wrangler dev" and installed packages; never part of the repository.
+# Local state of "wrangler dev", installed packages and the built site; never part of the repository.
 .wrangler/
 node_modules/
+dist/

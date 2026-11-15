@@ -112,7 +112,7 @@ h2 { font-size: clamp(28px, 4vw, 40px); margin-bottom: 14px; }
 .rule p { margin: 0; font-size: 19px; }
 
 /* ----- connection routes ----- */
-.routes { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; margin-bottom: 20px; }
+.routes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px; }
 .route { background: var(--card); border: 2px solid var(--ink); border-radius: 14px; padding: 18px; }
 .route h3 { font-size: 17px; margin-bottom: 6px; }
 .route p { margin: 0; font-size: 15px; color: var(--muted); }
@@ -165,6 +165,30 @@ h3.sub3 { font-size: 22px; margin: 8px 0 14px; }
 .qrbox figcaption { margin-top: 10px; font-size: 13px; text-align: center; color: #cfe0d8; }
 .qrbox { margin: 0; }
 
+/* ----- language menu: a plain <details>, so it works without any script ----- */
+.lang { position: relative; }
+.lang summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; padding: 5px 12px; border: 2px solid var(--ink); border-radius: 999px; background: var(--card); color: var(--ink); white-space: nowrap; user-select: none; }
+.lang summary::-webkit-details-marker { display: none; }
+.lang summary svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; flex: none; }
+.lang summary::after { content: ""; width: 6px; height: 6px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg) translateY(-2px); margin-left: 2px; }
+.lang[open] summary { background: var(--cream); color: #23413b; }
+.lang .menu { position: absolute; right: 0; top: calc(100% + 8px); z-index: 20; min-width: 200px; max-height: min(70vh, 480px); overflow-y: auto; background: var(--card); border: 2px solid var(--ink); border-radius: 14px; box-shadow: 5px 5px 0 var(--shadow); padding: 10px 6px; }
+.lang .cap { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin: 4px 10px; }
+.lang ul { list-style: none; margin: 0 0 6px; padding: 0; }
+.lang li a { display: block; padding: 7px 10px; border-radius: 8px; text-decoration: none; font-size: 15px; }
+.lang li a:hover, .lang li a:focus-visible { background: var(--mint-soft); }
+.lang li a[aria-current="true"] { font-weight: 800; background: var(--mint-soft); }
+.lang .suggest { border-bottom: 1px solid var(--line); margin-bottom: 6px; }
+
+/* ----- text in other languages: long words may break, and the scripts that do not want tight letter spacing get none ----- */
+h1, h2, h3, p, li, td, th { overflow-wrap: break-word; hyphens: auto; }
+html:lang(ja), html:lang(ko), html:lang(zh) { hyphens: none; }
+html:lang(ja) :is(h1, h2, h3, .tagline, .for), html:lang(ko) :is(h1, h2, h3, .tagline, .for), html:lang(zh) :is(h1, h2, h3, .tagline, .for) { letter-spacing: 0; line-height: 1.3; }
+html:lang(ja) body, html:lang(ko) body, html:lang(zh) body { line-height: 1.75; }
+html:lang(ko) body { word-break: keep-all; }   /* Korean is written with spaces between words: break there, not inside a word */
+html:lang(ja) body { word-break: auto-phrase; }   /* Japanese has no spaces: break between phrases, so a lone "す。" is not left on a line of its own */
+h1, h2, h3, .tagline { text-wrap: balance; }       /* even lines for short blocks of any language; browsers that do not know it ignore it */
+
 /* ----- footer ----- */
 footer { border-top: 2px solid var(--line); padding: 36px 0 56px; font-size: 14.5px; color: var(--muted); }
 footer .links { display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 14px; }
@@ -180,11 +204,23 @@ footer p { margin: 0 0 8px; max-width: 760px; }
   .qrbox { display: none; }               /* on a phone the button is enough; the code is for people reading on a computer */
   .top nav { display: none; }
   .top .pill { margin-left: auto; }
+  .routes { grid-template-columns: repeat(2, 1fr); }
   .author { grid-template-columns: 1fr; }
 }
 
+/* On the narrowest phones the top bar keeps the name and the language menu; the note "Early version" is in the page anyway. */
+@media (max-width: 560px) {
+  .top { gap: 12px; }
+  .top .pill { display: none; }
+  .lang { margin-left: auto; }
+  .brand .for { display: none; }
+  .routes { grid-template-columns: 1fr; }
+  .lang .menu { min-width: 180px; }
+}
+
 /* On a phone each table row becomes a small card: the feature on top, then the two answers, each with its label.
-   The labels are written here (not in the HTML) so the table stays a real table for screen readers and wide screens. */
+   The labels come from the data-label attribute of each cell (so every language writes its own), and the table stays a
+   real table for screen readers and wide screens. */
 @media (max-width: 700px) {
   .tablewrap { overflow: visible; border: 0; background: transparent; box-shadow: none; }
   table, thead, tbody, tr, td { display: block; min-width: 0; width: 100%; }
@@ -193,7 +229,5 @@ footer p { margin: 0 0 8px; max-width: 760px; }
   td { border: 0; padding: 4px 0; }
   td:first-child { width: 100%; font-size: 16px; padding-bottom: 6px; }
   td.us { background: transparent; }
-  td:nth-child(2)::before, td:nth-child(3)::before { display: block; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
-  td:nth-child(2)::before { content: "Dogr"; }
-  td:nth-child(3)::before { content: "Herdr\2019s phone app"; }
+  td:nth-child(2)::before, td:nth-child(3)::before { content: attr(data-label); display: block; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
 }
