@@ -9,7 +9,7 @@ stops with a clear message when something on your side (Tailscale, mostly) still
 ## Run it
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mithyer/dogr/main/setup.sh | sh
+curl -fsSL https://dogr.dev/setup.sh | sh
 ```
 
 The script first asks how your phone reaches this computer (see [Routes](#routes)), then says what it is about to do and asks
@@ -203,7 +203,7 @@ To follow upstream releases again afterwards, keep `COLLIE_UPDATE_REPO=AltanS/co
 Options go after `-s --` when the script comes through a pipe:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mithyer/dogr/main/setup.sh | sh -s -- --tailscale --yes
+curl -fsSL https://dogr.dev/setup.sh | sh -s -- --tailscale --yes
 ```
 
 | Option | Meaning |
@@ -337,7 +337,8 @@ Only a change to `site/`, `worker.js` or `wrangler.jsonc` has to be deployed, by
 npx wrangler@4 deploy
 ```
 
-The GitHub address of the script keeps working and stays the fallback. To take the site down, delete the Worker `dogr-site`
+The GitHub address of the script (`https://raw.githubusercontent.com/mithyer/dogr/main/setup.sh`) keeps working, because earlier
+versions of the app show it, and it stays the fallback. To take the site down, delete the Worker `dogr-site`
 in the Cloudflare dashboard (Workers & Pages); nothing else depends on it.
 
 ## Tests

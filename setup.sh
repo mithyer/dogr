@@ -19,7 +19,7 @@
 # (COLLIE_SKIP_SERVE, COLLIE_PUBLIC_URL and friends). A line that is there is replaced where it stands, a missing one is added.
 # The tailcat and iroh routes also write a service file and a log (see the README for where, and how to undo it).
 #
-# Run it:        curl -fsSL https://raw.githubusercontent.com/mithyer/dogr/main/setup.sh | sh
+# Run it:        curl -fsSL https://dogr.dev/setup.sh | sh
 # Options go after `-s --`:   ... | sh -s -- --tailscale --yes
 #
 # Safe to run again: a step that is already done is skipped, and nothing is installed twice.
