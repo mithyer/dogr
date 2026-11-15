@@ -29,7 +29,7 @@
 #
 # Environment (all optional):
 #   DOGR_COLLIE_REPO          the GitHub repository Collie's Dogr build comes from (default mithyer/collie)
-#   DOGR_COLLIE_TAG           the Collie release to install (default v1.28.1-dogr.1, the one this script was tested with)
+#   DOGR_COLLIE_TAG           the Collie release to install (default v1.28.1-dogr.2, the one this script was tested with)
 #   DOGR_COLLIE_INSTALL_URL   where Collie's installer comes from (default: scripts/install.sh of that repository at that tag)
 #   DOGR_HERDR_INSTALL_URL    where herdr's installer comes from (default https://herdr.dev/install.sh)
 #   DOGR_HERDR_CORE_INSTALL_URL   where herdr-core's installer comes from (default https://releases.herdr.dev/core/install.sh)
@@ -49,7 +49,7 @@ main() {
     # Collie is installed from the Dogr build of Collie: a release of its own repository, named vX.Y.Z-dogr.N. One tag is
     # pinned on purpose (never "the newest"): a new build is used by this script only after it has been tested with it.
     COLLIE_REPO=${DOGR_COLLIE_REPO:-mithyer/collie}
-    COLLIE_PIN=${DOGR_COLLIE_TAG:-v1.28.1-dogr.1}
+    COLLIE_PIN=${DOGR_COLLIE_TAG:-v1.28.1-dogr.2}
     INSTALL_URL=${DOGR_COLLIE_INSTALL_URL:-https://raw.githubusercontent.com/$COLLIE_REPO/$COLLIE_PIN/scripts/install.sh}
     TTY=${DOGR_TTY:-/dev/tty}
     TRIES=${DOGR_TRIES:-20}
