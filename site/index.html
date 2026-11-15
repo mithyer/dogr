@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dogr</title>
+<meta name="description" content="Watch your terminal agents from your phone: see which one needs you, read what it is doing, answer from anywhere.">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<style>
+  /* Colours come from the app icon: mint #86bfa9, cream #fff1d4, deep green #23413b. */
+  :root { --bg: #fffdf6; --text: #23413b; --muted: #5d7a70; --mint: #86bfa9; --card: #f4f1e3; --line: #cfe3d9; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16231f; --text: #fff1d4; --muted: #a9bdb4; --card: #1f322c; --line: #2f4a41; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 56px 24px 40px; }
+  img { width: 96px; height: 96px; border-radius: 22px; image-rendering: pixelated; display: block; }
+  h1 { font-size: 40px; margin: 20px 0 4px; letter-spacing: -0.5px; }
+  .lead { font-size: 20px; margin: 0 0 40px; color: var(--muted); }
+  h2 { font-size: 18px; margin: 36px 0 8px; }
+  p { margin: 0 0 12px; }
+  pre { margin: 12px 0; padding: 14px 16px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; font: 15px/1.4 ui-monospace, "SF Mono", Menlo, monospace; }
+  a { color: inherit; text-decoration-color: var(--mint); text-underline-offset: 3px; }
+  .note { color: var(--muted); font-size: 15px; }
+  footer { margin-top: 56px; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <img src="/icon.svg" alt="Dogr, a pixel-art dog">
+  <h1>Dogr</h1>
+  <p class="lead">Watch your terminal agents from your phone.</p>
+
+  <p>Dogr shows which of your coding agents is working, which one is waiting for you, and which one has finished. You read what it is doing and answer from anywhere. It is an iPhone app for <a href="https://github.com/AltanS/collie">Collie</a>, the open-source web interface for terminal agents.</p>
+  <p class="note">The iPhone app is not on the App Store yet.</p>
+
+  <h2>Set up your computer</h2>
+  <p>One command puts Collie on your Mac or Linux computer and shows a QR code for the app to scan:</p>
+  <pre>curl -fsSL https://dogr.dev/setup.sh | sh</pre>
+  <p class="note">The script says what it is about to do and asks once before it changes anything. You can <a href="/setup.sh">read it first</a>. Options and how to undo everything are on <a href="https://github.com/mithyer/dogr">GitHub</a>.</p>
+
+  <h2>Questions and feedback</h2>
+  <p>Write to <a href="mailto:fb@dogr.dev">fb@dogr.dev</a>.</p>
+
+  <footer>Dogr is an independent project and is not made by the authors of Collie.</footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,16 @@
+{
+  // The dogr.dev site: static files from ./site, and one small Worker that serves /setup.sh.
+  // Deploy by hand with: npx wrangler@4 deploy   (see "The dogr.dev site" in README.md)
+  "name": "dogr-site",
+  "main": "worker.js",
+  "compatibility_date": "2026-11-01",
+  // Only the custom domain reaches this Worker; no workers.dev address is published.
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./site",
+    // /setup.sh is answered by worker.js (it reads the script from GitHub); everything else is a plain file in ./site.
+    "run_worker_first": ["/setup.sh"]
+  },
+  "routes": [{ "pattern": "dogr.dev", "custom_domain": true }]
+}

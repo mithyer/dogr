@@ -319,6 +319,27 @@ Then run `collie restart` (or `collie uninstall` as above).
 To forget a paired phone without removing Collie, run `collie devices list`, then `collie devices revoke <label>`. To stop Collie for now and keep everything, run
 `collie stop`.
 
+## The dogr.dev site
+
+`https://dogr.dev` is a Cloudflare Worker with static files. It is not part of what `setup.sh` installs; it only gives the
+script a short address and the project a home page.
+
+| File | What it is |
+| --- | --- |
+| `site/index.html`, `site/icon.svg` | The home page and its icon, served as plain files |
+| `worker.js` | Answers only `/setup.sh`: it passes through the script on the `main` branch of this repository (kept for 60 seconds), and answers with an error status instead of anything that does not start with `#!/bin/sh`, so a broken answer never reaches `| sh` |
+| `wrangler.jsonc` | Names the Worker `dogr-site`, points it at `site/`, sends only `/setup.sh` to `worker.js`, and attaches the domain `dogr.dev` |
+
+The script is read from GitHub on every request (through Cloudflare's cache), so a push to `main` needs no new deployment.
+Only a change to `site/`, `worker.js` or `wrangler.jsonc` has to be deployed, by hand:
+
+```sh
+npx wrangler@4 deploy
+```
+
+The GitHub address of the script keeps working and stays the fallback. To take the site down, delete the Worker `dogr-site`
+in the Cloudflare dashboard (Workers & Pages); nothing else depends on it.
+
 ## Tests
 
 ```sh
