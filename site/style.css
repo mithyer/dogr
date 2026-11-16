@@ -229,3 +229,27 @@ footer p { margin: 0 0 8px; max-width: 760px; }
   td.us { background: transparent; }
   td:nth-child(2)::before, td:nth-child(3)::before { content: attr(data-label); display: block; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
 }
+
+/* The plain document pages (privacy, support). */
+.doc { padding-block: 28px 56px; max-width: 760px; hyphens: manual; }
+.doc h1 { font-size: clamp(30px, 5vw, 42px); line-height: 1.15; margin: 8px 0 6px; }
+.doc h2 { font-size: 22px; margin: 34px 0 8px; }
+.doc p, .doc li, .doc dd { line-height: 1.65; }
+.doc h1, .doc h2, .doc p, .doc li, .doc td, .doc th, .doc dd { hyphens: manual; }
+.doc .meta { color: var(--muted); font-size: 15px; margin: 0 0 18px; }
+.doc .lead { font-size: 19px; line-height: 1.6; }
+.doc ul, .doc ol { padding-left: 22px; }
+.doc li { margin: 6px 0; }
+.doc dt { font-weight: 700; margin-top: 16px; }
+.doc dd { margin: 4px 0 0; }
+.doc code { font-size: 0.92em; }
+.doc table.plain { width: 100%; border-collapse: collapse; font-size: 16px; margin: 12px 0; }
+.doc table.plain th, .doc table.plain td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.doc table.plain thead th { font-size: 14px; color: var(--muted); }
+@media (max-width: 700px) {
+  .doc table.plain, .doc table.plain tbody, .doc table.plain tr, .doc table.plain td { display: block; width: 100%; }
+  .doc table.plain thead { display: none; }
+  .doc table.plain tr { border: 1px solid var(--line); border-radius: 10px; margin: 10px 0; padding: 4px 0; background: var(--card); }
+  .doc table.plain td { border: 0; padding: 6px 12px; }
+  .doc table.plain td::before { content: attr(data-label); display: block; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+}

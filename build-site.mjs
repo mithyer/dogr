@@ -24,6 +24,9 @@ const ROOT = dirname(fileURLToPath(import.meta.url));
 /** Files and folders of `site/` that are copied to the output unchanged. */
 const STATIC_ENTRIES = ["style.css", "page.js", "icon.svg", "img"];
 
+/** The plain English pages (site/pages/<name>.html), each written to /<name>/. They have no language menu and no strings table. */
+export const PLAIN_PAGES = ["privacy", "support"];
+
 /**
  * The address a language page is served at, which is also its path in the output folder.
  * @param {string} code Language code.
@@ -326,6 +329,7 @@ export function sitemap() {
   const links = LANGUAGES.map(({ code, html }) => `    <xhtml:link rel="alternate" hreflang="${html}" href="${canonicalOf(code)}"/>`);
   links.push(`    <xhtml:link rel="alternate" hreflang="x-default" href="${ORIGIN}/"/>`);
   const urls = LANGUAGES.map(({ code }) => `  <url>\n    <loc>${canonicalOf(code)}</loc>\n${links.join("\n")}\n  </url>`);
+  for (const name of PLAIN_PAGES) urls.push(`  <url>\n    <loc>${ORIGIN}/${name}/</loc>\n  </url>`);
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">',
@@ -359,6 +363,10 @@ export function build({ sourceDir = join(ROOT, "site"), outDir = join(ROOT, "dis
     mkdirSync(join(outDir, code), { recursive: true });
     writeFileSync(join(outDir, code, "index.html"), renderPage(template, strings[code], code));
     pages.push(code);
+  }
+  for (const name of PLAIN_PAGES) {
+    mkdirSync(join(outDir, name), { recursive: true });
+    cpSync(join(sourceDir, "pages", `${name}.html`), join(outDir, name, "index.html"));
   }
   for (const entry of STATIC_ENTRIES) cpSync(join(sourceDir, entry), join(outDir, entry), { recursive: true });
   cpSync(join(ROOT, "lang.js"), join(outDir, "lang.js"));

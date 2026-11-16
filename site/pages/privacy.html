@@ -1,0 +1,104 @@
+<!doctype html>
+<!-- A plain English page of dogr.dev (not part of the twelve-language template). build-site.mjs copies it to /privacy/. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dogr privacy policy</title>
+<meta name="description" content="What the Dogr app keeps on your phone, what leaves it, and what does not exist: no account, no ads, no tracking.">
+<link rel="canonical" href="https://dogr.dev/privacy/">
+<meta name="robots" content="index, follow">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="wrap top">
+  <a class="brand" href="/en/"><img src="/icon.svg" alt="">Dogr<span class="for">for Herdr</span></a>
+</header>
+
+<main class="wrap doc">
+  <h1>Privacy policy</h1>
+  <p class="meta">For the Dogr iPhone and iPad app and the dogr.dev website. Last changed 16 November 2026.</p>
+
+  <p class="lead">Dogr does not collect your data. It has no account, no ads, no analytics and no tracking, and it sends nothing to me
+  unless you choose to send feedback. This page says what that means in detail.</p>
+
+  <h2>What the app talks to</h2>
+  <p>The app connects to the computers you add yourself. Nothing else. Everything you see in it, such as the names of your agents, the
+  text of a terminal or a conversation, goes straight between your phone and your own computer. I do not run a server that sits in the
+  middle, and I cannot see that traffic.</p>
+  <p>If you connect through Tailscale, Tailcat, Iroh or SSH, the connection is set up by that service or by your computer, and the
+  data between your phone and your computer is encrypted. Some of these ways can pass through a relay server when the phone and the
+  computer cannot reach each other directly:</p>
+  <ul>
+    <li><strong>Iroh</strong> uses the public relay servers run by n0 by default, unless you give your own relay address. A relay carries
+    encrypted data. It can see technical details of the connection, such as network addresses and timing.</li>
+    <li><strong>Tailcat</strong> uses the free relays of the Tailcat project by default, unless you give your own relay map.</li>
+    <li><strong>Tailscale</strong>, <strong>SSH</strong>, <strong>your own HTTPS proxy</strong> and <strong>the same Wi-Fi</strong> use
+    the service, server or network you point them at.</li>
+  </ul>
+  <p>Those services have their own privacy policies. Dogr does not add anything to what they see.</p>
+
+  <h2>What stays on your phone</h2>
+  <table class="plain">
+    <thead><tr><th>What</th><th>Where</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td data-label="What">The list of your computers: the name you gave each one and its address</td><td data-label="Where">The app's storage on the phone</td><td data-label="Why">To show them and connect again</td></tr>
+      <tr><td data-label="What">Pairing tokens, the secret address of a Tailcat or Iroh connection, an SSH password if you chose to keep it, and the SSH key the app makes</td><td data-label="Where">The iOS Keychain</td><td data-label="Why">To sign in to your computer without asking again</td></tr>
+      <tr><td data-label="What">Your choices: theme, text size, language, layout, and the fingerprints of computers you trusted over SSH</td><td data-label="Where">The app's storage on the phone</td><td data-label="Why">To remember your settings</td></tr>
+      <tr><td data-label="What">A small log of what the app did and what failed (steps and kinds of error, with names, addresses and codes removed); the newest few files, kept up to 14 days</td><td data-label="Where">A folder in the app's storage</td><td data-label="Why">To help find a problem when you ask for help</td></tr>
+      <tr><td data-label="What">A picture of the last screen you looked at, and the latest conversation text you read; either can show what was on your computer</td><td data-label="Where">The app's cache folder, which is not part of a backup</td><td data-label="Why">So the app opens where you left off, quickly</td></tr>
+    </tbody>
+  </table>
+  <p>Deleting the app removes all of this from the phone. Removing a computer in the app removes what belongs to it.</p>
+
+  <h2>What the app asks iOS for</h2>
+  <ul>
+    <li><strong>Camera</strong>, only to scan the QR code that your computer shows when you pair. No picture is kept or sent.</li>
+    <li><strong>Photo picker</strong>, only if you choose a saved picture of that QR code instead. The app reads the code from it on the
+    phone and does not keep the picture.</li>
+    <li><strong>Local network</strong>, so the phone can reach a computer on the same Wi-Fi.</li>
+  </ul>
+
+  <h2>Feedback: the one time something reaches me</h2>
+  <p>Settings has a Send feedback button. It opens the Mail composer with a message to <a href="mailto:fb@dogr.dev">fb@dogr.dev</a> and
+  two files you can open and read before you send anything:</p>
+  <ul>
+    <li><code>dogr-info.txt</code>: the app version, the phone model, the iOS version and language, your settings, and for each computer a
+    few technical facts, such as how it is connected and the version of the software on it. It has no name, no address, no code and no
+    screen text.</li>
+    <li><code>dogr-logs.zip</code>: the recent log described above.</li>
+  </ul>
+  <p>You can delete either file, change the text, or close the composer. Nothing is sent until you press Send in Mail. I use what you
+  send only to look into the problem and to answer you, and I do not share it. To have your message deleted, write to the same address.</p>
+
+  <h2>The website</h2>
+  <p>dogr.dev is hosted on Cloudflare. It has no ads, no analytics and no tracking scripts, and it loads nothing from other sites.
+  The only thing it can store in your browser is the language you pick, and only if you pick one. To suggest a language, Cloudflare tells
+  the site which country a request comes from; the site does not keep that.</p>
+
+  <h2>Children</h2>
+  <p>Dogr is a tool for people who run coding agents on their own computers. It is not aimed at children, and it does not collect any
+  data from anyone.</p>
+
+  <h2>Changes</h2>
+  <p>If the app starts to do something that changes this page, for example push notifications, this page will say so first, with the
+  date above. This version of the app has no push notifications.</p>
+
+  <h2>Contact</h2>
+  <p>Dogr is an independent project. Questions, or a request about your data: <a href="mailto:fb@dogr.dev">fb@dogr.dev</a>.</p>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="/en/">Home</a>
+      <a href="/support/">Support</a>
+      <a href="mailto:fb@dogr.dev">fb@dogr.dev</a>
+    </div>
+    <p>Dogr is an independent project. It is not made by, or affiliated with, Herdr or Herdr, Inc.</p>
+  </div>
+</footer>
+</body>
+</html>

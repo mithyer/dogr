@@ -1,0 +1,86 @@
+<!doctype html>
+<!-- A plain English page of dogr.dev (not part of the twelve-language template). build-site.mjs copies it to /support/. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dogr support</title>
+<meta name="description" content="Help with Dogr: what you need, how to set up and pair a computer, what to try when it cannot connect, and how to send feedback.">
+<link rel="canonical" href="https://dogr.dev/support/">
+<meta name="robots" content="index, follow">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="wrap top">
+  <a class="brand" href="/en/"><img src="/icon.svg" alt="">Dogr<span class="for">for Herdr</span></a>
+</header>
+
+<main class="wrap doc">
+  <h1>Support</h1>
+  <p class="lead">Dogr is made by one person and is still new. The quickest way to get help, or to tell me something is wrong, is the
+  Send feedback button at the bottom of the app's Settings. It writes the email for you and attaches the facts that help me find the
+  problem. You can also write to <a href="mailto:fb@dogr.dev">fb@dogr.dev</a>.</p>
+
+  <h2>What you need</h2>
+  <ul>
+    <li>An iPhone or iPad with iOS 17.5 or newer.</li>
+    <li>A Mac or Linux computer that runs <a href="https://herdr.dev">Herdr</a> (the Herdr TUI or herdr-core).</li>
+    <li>One command, run once on that computer, that sets up the small service Dogr talks to and the way to reach it. Open the
+    <a href="/en/#start">Get started</a> section of the home page for the command and the three steps.</li>
+  </ul>
+
+  <h2>Setting up</h2>
+  <ol>
+    <li>On the computer, run the command from the home page. It asks how your phone will reach the computer, says what it is about to do
+    and asks before it does it; <code>--dry-run</code> shows the plan and changes nothing.</li>
+    <li>It prints a QR code and a link. In the app, tap Add a machine and scan the code, or paste the link.</li>
+    <li>Pick how the phone reaches the computer: Tailscale, Tailcat, Iroh, SSH, your own HTTPS proxy, or the same Wi-Fi. The app shows
+    the command for the one you pick. If the computer allows SSH, the app can also run the setup for you after you give it the login;
+    when the app only runs the setup, that password is used once and not kept.</li>
+  </ol>
+
+  <h2>When it cannot connect</h2>
+  <table class="plain">
+    <thead><tr><th>What you see</th><th>What to try</th></tr></thead>
+    <tbody>
+      <tr><td data-label="What you see">"Can't reach this machine"</td><td data-label="What to try">Is the computer awake and online? Run <code>collie doctor</code> on it; it checks the service and says what is wrong. If you use Tailscale, make sure it is on on the phone too. Then tap Try again.</td></tr>
+      <tr><td data-label="What you see">The pairing code does not work</td><td data-label="What to try">A code works once and expires. Run <code>collie pair</code> on the computer for a new one.</td></tr>
+      <tr><td data-label="What you see">The machine goes offline after a while on Iroh or Tailcat</td><td data-label="What to try">These can pass through a public relay, which can be slow or busy. Run your own relay (the home page says how), or choose another way to connect.</td></tr>
+      <tr><td data-label="What you see">It worked yesterday, not today</td><td data-label="What to try">The computer may have restarted, or its address may have changed. Run <code>collie status</code> there, and add the machine again if its link changed.</td></tr>
+      <tr><td data-label="What you see">The app warns that a computer's SSH key changed</td><td data-label="What to try">That is the warning working. If you did reinstall that computer, trust the new key; if you did not, do not.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Everyday questions</h2>
+  <dl>
+    <dt>How do I remove a computer?</dt>
+    <dd>Press and hold its card on the first screen, then choose Remove.</dd>
+    <dt>How do I update the service on the computer?</dt>
+    <dd>Run <code>collie update</code> there.</dd>
+    <dt>Does Dogr work without Herdr?</dt>
+    <dd>No. It is a remote control for Herdr, and it needs the service from the setup command next to it.</dd>
+    <dt>What does Dogr keep and send?</dt>
+    <dd>See the <a href="/privacy/">privacy policy</a>. In short: nothing leaves your phone except the traffic to your own computers,
+    and the feedback email when you send one.</dd>
+  </dl>
+
+  <h2>Tell me what is wrong, or what is missing</h2>
+  <p>Dogr needs polishing and every report helps. Use Send feedback in the app, write to <a href="mailto:fb@dogr.dev">fb@dogr.dev</a>,
+  or open an issue on <a href="https://github.com/mithyer/dogr">GitHub</a>. Please say what you did, what you expected and what
+  happened.</p>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="/en/">Home</a>
+      <a href="/privacy/">Privacy</a>
+      <a href="mailto:fb@dogr.dev">fb@dogr.dev</a>
+    </div>
+    <p>Dogr is an independent project. It is not made by, or affiliated with, Herdr or Herdr, Inc.</p>
+  </div>
+</footer>
+</body>
+</html>

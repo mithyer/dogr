@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 import { after, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { build, checkStrings, loadStrings, parseCsv, placeholdersOf, renderPage, sitemap } from "../build-site.mjs";
+import { PLAIN_PAGES, build, checkStrings, loadStrings, parseCsv, placeholdersOf, renderPage, sitemap } from "../build-site.mjs";
 import {
   COUNTRY_LANGUAGE,
   LANGUAGES,
@@ -330,12 +330,31 @@ describe("the real site", () => {
 
   test("the sitemap lists every language and the robots file names it", () => {
     const text = sitemap();
-    assert.equal((text.match(/<loc>/g) ?? []).length, 12);
+    assert.equal((text.match(/<loc>/g) ?? []).length, 12 + PLAIN_PAGES.length);
+    assert.ok(text.includes("<loc>https://dogr.dev/privacy/</loc>") && text.includes("<loc>https://dogr.dev/support/</loc>"));
     assert.ok(text.includes("<loc>https://dogr.dev/</loc>"));
     assert.ok(text.includes("<loc>https://dogr.dev/zh-tw/</loc>"));
     assert.ok(!text.includes("<loc>https://dogr.dev/en/</loc>"), "English is listed once, at the root");
     assert.equal(readFileSync(join(out, "sitemap.xml"), "utf8"), text);
     assert.ok(readFileSync(join(out, "robots.txt"), "utf8").includes("Sitemap: https://dogr.dev/sitemap.xml"));
+  });
+
+  // The App Store listing points at these two addresses, so they must exist, say who they are, and link to each other.
+  test("the privacy and support pages are written, finished and linked", () => {
+    assert.deepEqual(PLAIN_PAGES, ["privacy", "support"]);
+    for (const name of PLAIN_PAGES) {
+      const page = readFileSync(join(out, name, "index.html"), "utf8");
+      assert.ok(page.includes(`<link rel="canonical" href="https://dogr.dev/${name}/">`), `${name}: canonical`);
+      assert.ok(!page.includes("{{") && !/TODO|lorem/i.test(page), `${name}: nothing unfinished`);
+      assert.ok(page.includes('href="mailto:fb@dogr.dev"'), `${name}: the contact`);
+      assert.ok(page.includes('<link rel="stylesheet" href="/style.css">'), `${name}: the style`);
+    }
+    assert.ok(readFileSync(join(out, "privacy", "index.html"), "utf8").includes('href="/support/"'));
+    assert.ok(readFileSync(join(out, "support", "index.html"), "utf8").includes('href="/privacy/"'));
+    for (const { code } of LANGUAGES) {
+      const page = readFileSync(join(out, code, "index.html"), "utf8");
+      assert.ok(page.includes('href="/privacy/"') && page.includes('href="/support/"'), `${code}: the footer links`);
+    }
   });
 
   test("a page cannot be rendered when the template asks for something that does not exist", () => {
