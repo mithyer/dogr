@@ -721,6 +721,25 @@ expect_rc 0
 expect_called "download https://raw.githubusercontent.com/someone/collie/v1.28.1-dogr.3/scripts/install.sh"
 expect_called "installer ran tag=v1.28.1-dogr.3 repo=someone/collie"
 
+# The phone app says which app and version asked for the script (--from). It only adds one line to the plan; nothing else changes.
+run_case "from the app" -- --tailscale --from iosv0.2 --yes
+expect_rc 0
+expect_out "Started by the Dogr app (iosv0.2)."
+run_case "from the app, written with an equals sign" -- --tailscale --from=iosv1.12.3-beta1 --yes
+expect_rc 0
+expect_out "Started by the Dogr app (iosv1.12.3-beta1)."
+run_case "no from" -- --tailscale --yes
+expect_rc 0
+expect_no_out "Started by the Dogr app"
+# The value is printed, so one that is not plain is refused before anything is done.
+run_case "from that is not plain" -- --tailscale --from 'iosv0.2;id' --yes
+expect_rc 1
+expect_out "unknown --from value"
+expect_not_called "collie start"
+run_case "from without a value" -- --tailscale --from
+expect_rc 1
+expect_out "--from needs a value"
+
 # A Collie that is already a Dogr build is left as it is, even when the pin is another one.
 run_case "dogr build is left alone" STUB_COLLIE_VERSION=1.28.0-dogr.2 -- --tailscale --yes
 expect_rc 0

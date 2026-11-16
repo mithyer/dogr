@@ -56,6 +56,8 @@ main() {
     COLLIE_PIN=${DOGR_COLLIE_TAG:-v1.28.1-dogr.3}
     INSTALL_URL=${DOGR_COLLIE_INSTALL_URL:-https://raw.githubusercontent.com/$COLLIE_REPO/$COLLIE_PIN/scripts/install.sh}
     TTY=${DOGR_TTY:-/dev/tty}
+    # which app asked for this script (--from), for example iosv0.2; empty when the script was started by hand. Nothing branches on it yet.
+    FROM=
     TRIES=${DOGR_TRIES:-20}
     DELAY=${DOGR_POLL_DELAY:-1}
     # how the phone reaches this computer: tailscale, tailcat, iroh, ssh, proxy or lan; empty until an option or the questions say
@@ -296,7 +298,7 @@ WRAPPER
         cat <<'EOF'
 Usage: setup.sh [--tailscale | --tailcat [--derpmap-url URL] [--region NAME] | --iroh [--relay-url URL] | --ssh [--ssh-port N] [--ssh-key KEY]
                 | --proxy --url URL | --lan [--host ADDRESS]]
-                [--mux herdr|herdr-core] [--http] [--yes] [--dry-run] [--help]
+                [--mux herdr|herdr-core] [--http] [--from CLIENT] [--yes] [--dry-run] [--help]
 
 Puts Collie on this computer, sets it up for the way your phone reaches it, and shows a QR code that pairs your phone.
 Without --tailscale, --tailcat, --iroh, --ssh, --proxy or --lan the script asks which way you use.
@@ -341,6 +343,9 @@ Without --tailscale, --tailcat, --iroh, --ssh, --proxy or --lan the script asks 
                 tailnet instead. Tailscale still encrypts the traffic between your devices. This adds the line
                 COLLIE_SERVE_MODE=http to Collie's .env. Without this option the script asks first, and with --yes
                 and no terminal it stops instead of switching by itself.
+  --from CLIENT Which app asked for this script, as the platform and the version joined by a v, for example iosv0.2. The Dogr
+                app puts it in the command it shows. It only says who is asking, so a later script can treat an older app
+                differently; nothing else changes. Leave it out when you run the script by hand.
   --yes, -y     Do not ask before changing anything.
   --dry-run     Show what would happen, change nothing, and stop.
   --help, -h    Show this text.
@@ -1552,6 +1557,15 @@ EOF
                 shift
                 ;;
             --mux=*) MUX=${1#--mux=} ;;
+            --from)
+                if [ $# -lt 2 ]; then
+                    usage >&2
+                    die 1 "--from needs a value: the app and its version, for example iosv0.2"
+                fi
+                FROM=$2
+                shift
+                ;;
+            --from=*) FROM=${1#--from=} ;;
             --http) HTTP_OK=1 ;;
             --yes | -y) ASSUME_YES=1 ;;
             --dry-run) DRY_RUN=1 ;;
@@ -1572,6 +1586,15 @@ EOF
         *)
             usage >&2
             die 1 "unknown --mux value: $MUX (use herdr or herdr-core)"
+            ;;
+    esac
+
+    # The value is printed in the plan, so it must be plain. Its shape (platform, a v, the version) is not checked: a later app may
+    # say more than today's, and this script only prints it.
+    case $FROM in
+        *[!0-9A-Za-z._+-]*)
+            usage >&2
+            die 1 "unknown --from value: $FROM (letters, digits, dots and dashes only, for example iosv0.2)"
             ;;
     esac
 
@@ -1657,6 +1680,10 @@ EOF
         fi
     else
         install_line="Install the Dogr build of Collie ($COLLIE_PIN from $COLLIE_REPO) into ${COLLIE_DIR:-~/.local/share/collie} with Collie's own installer (${INSTALL_URL})."
+    fi
+    # Who is asking, when the app said so: a person who copied the command can see which app it came from.
+    if [ -n "$FROM" ]; then
+        say "Started by the Dogr app ($FROM)."
     fi
     say "This will:"
     plan "$install_line"
