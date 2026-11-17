@@ -21,7 +21,7 @@ import {
   parseAcceptLanguage,
   pickLanguage,
 } from "../lang.js";
-import worker from "../worker.js";
+import worker, { APP_STORE_URL } from "../worker.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const TEMPLATE = readFileSync(join(ROOT, "site", "page.html"), "utf8");
@@ -327,6 +327,40 @@ describe("the real site", () => {
       assert.ok(page.includes("data-copied="), `${code}: the copied label`);
     }
   });
+  test("every page has the App Store code and badge at the right of the name and the badge and code again at the bottom, all leading to /get", () => {
+    for (const { code } of LANGUAGES) {
+      const page = readFileSync(join(out, code, "index.html"), "utf8");
+      const hero = page.slice(page.indexOf('<section class="hero">'), page.indexOf('id="herdr"'));
+      const download = page.slice(page.indexOf('<section id="download">'), page.indexOf("</main>"));
+      const badge = new RegExp(`<a class="storebadge" href="/get"><img src="/img/appstore/${code}\\.svg" height="\\d+" alt="[^"]+">`);
+      // The code and the badge come after the <h1> in the same row, so they sit at the right of the name.
+      assert.ok(hero.indexOf('<div class="titlerow">') >= 0 && hero.indexOf("<h1>") < hero.indexOf('<div class="getit">'), `${code}: the name, then the code and badge`);
+      assert.match(hero, /<a class="qrlink" href="\/get"><img src="\/img\/qr-get\.svg"[^>]* alt="[^"]+">/, `${code}: the code at the top`);
+      assert.match(hero, badge, `${code}: the badge at the top`);
+      assert.match(download, badge, `${code}: the badge at the bottom`);
+      assert.match(download, /<a class="qr" href="\/get"><img src="\/img\/qr-get\.svg"[^>]* alt="[^"]+"/, `${code}: the code at the bottom`);
+      assert.ok(!page.includes("btn soon"), `${code}: no placeholder button is left`);
+    }
+  });
+  test("the QR code of the home page is a valid static SVG", () => {
+    const svg = readFileSync(join(ROOT, "site", "img", "qr-get.svg"), "utf8");
+    const box = svg.match(/viewBox="0 0 (\d+) (\d+)"/);
+    // Square, and big enough for the shortest QR version (21 modules) plus a quiet zone of four modules on each side.
+    assert.ok(box && box[1] === box[2] && Number(box[1]) >= 29, "a square box with a quiet zone");
+    assert.equal((svg.match(/<path /g) ?? []).length, 1, "the dark modules are one path");
+    assert.ok(!/<script|<image|<foreignObject|href=|onload/i.test(svg), "nothing active or outside");
+    assert.ok(svg.length < 20000, "small enough to inline-load");
+  });
+  test("the App Store badges are one unchanged static SVG per language", () => {
+    const dir = join(ROOT, "site", "img", "appstore");
+    assert.deepEqual(readdirSync(dir).sort(), LANGUAGES.map(({ code }) => `${code}.svg`).sort());
+    for (const { code } of LANGUAGES) {
+      const svg = readFileSync(join(dir, `${code}.svg`), "utf8");
+      assert.ok(svg.trimStart().startsWith("<svg") && svg.includes("viewBox"), `${code}: an SVG with a box`);
+      assert.ok(!/<script|onload|<foreignObject/i.test(svg), `${code}: nothing active`);
+      assert.ok(!svg.replaceAll("http://www.w3.org/2000/svg", "").includes("http"), `${code}: no outside address`);
+    }
+  });
 
   test("the sitemap lists every language and the robots file names it", () => {
     const text = sitemap();
@@ -461,6 +495,30 @@ describe("worker: the home page", () => {
   });
 });
 
+describe("worker: /get", () => {
+  test("the target is the app's page in the App Store", () => {
+    assert.match(APP_STORE_URL, /^https:\/\/apps\.apple\.com\/app\/id\d+$/);
+  });
+  test("GET is a temporary redirect that is never kept, and the query string does not change the target", async () => {
+    for (const path of ["/get", "/get?utm=x"]) {
+      const answer = await worker.fetch(new Request(`https://dogr.dev${path}`), {});
+      assert.equal(answer.status, 302);
+      assert.equal(answer.headers.get("location"), APP_STORE_URL);
+      assert.match(answer.headers.get("cache-control"), /no-store/);
+    }
+  });
+  test("HEAD is answered the same way and other methods are refused", async () => {
+    const head = await worker.fetch(new Request("https://dogr.dev/get", { method: "HEAD" }), {});
+    assert.equal(head.status, 302);
+    assert.equal(head.headers.get("location"), APP_STORE_URL);
+    const post = await worker.fetch(new Request("https://dogr.dev/get", { method: "POST" }), {});
+    assert.equal(post.status, 405);
+    assert.equal(post.headers.get("location"), null);
+  });
+  test("wrangler.jsonc sends /get to the Worker first", () => {
+    assert.match(readFileSync(join(ROOT, "wrangler.jsonc"), "utf8"), /"run_worker_first": \[[^\]]*"\/get"/);
+  });
+});
 describe("worker: /_geo", () => {
   /** A request that carries the country Cloudflare would have put on it. */
   function geoRequest(country) {

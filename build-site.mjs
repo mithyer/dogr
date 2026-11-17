@@ -310,6 +310,8 @@ export function renderPage(template, values, code) {
     canonical: canonicalOf(code),
     alternates: alternates(),
     languages: languageItems(code),
+    // Apple's own "Download on the App Store" badge in this language (site/img/appstore/<code>.svg, unchanged files).
+    badge: `/img/appstore/${code}.svg`,
   };
   return stripComments(template).replace(PLACEHOLDER, (_whole, kind, key) => {
     if (kind === "$") {

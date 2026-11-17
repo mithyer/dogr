@@ -68,6 +68,15 @@ h2 { font-size: clamp(28px, 4vw, 40px); margin-bottom: 14px; }
 .hero { padding: 40px 0 72px; }
 .hero .grid { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 48px; align-items: center; }
 /* The page title is the name with its relationship: a heavy "Dogr" and a lighter "for Herdr" on the same baseline. */
+/* The name at the left, the App Store code and badge at its right; they drop below the name when the line is too narrow. */
+.titlerow { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 18px 28px; margin-bottom: 18px; }
+/* The name takes what the code leaves (basis 0), but never less than its own width, so the code only drops below on a very narrow line. */
+.hero .titlerow h1 { margin-bottom: 0; flex: 1 1 0; min-width: 2.4em; }
+.getit { display: flex; flex-direction: column; align-items: center; gap: 10px; flex: 0 0 auto; }
+.getit .qrlink { display: block; width: 104px; height: 104px; border-radius: 12px; overflow: hidden; border: 2px solid var(--ink); background: #fff; }
+.getit .qrlink img { display: block; width: 100%; height: 100%; }
+.storebadge { display: inline-block; line-height: 0; border-radius: 8px; }
+.storebadge img { display: block; height: 40px; width: auto; }
 .hero h1 { font-size: clamp(54px, 9vw, 104px); line-height: 1; margin-bottom: 18px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2em 0.28em; }
 .hero h1 .name { font-weight: 800; background: linear-gradient(transparent 70%, var(--mint) 70%); }
 .hero h1 .for { font-weight: 500; font-size: 0.3em; line-height: 1.2; letter-spacing: -0.01em; color: var(--muted); }
@@ -77,7 +86,6 @@ h2 { font-size: clamp(28px, 4vw, 40px); margin-bottom: 14px; }
 .badges .pill { background: var(--card); color: var(--ink); }
 .cta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 14px; }
 .btn { display: inline-block; font: inherit; font-weight: 700; font-size: 16px; padding: 12px 20px; border-radius: 12px; border: 2px solid var(--ink); background: var(--ink); color: var(--bg); text-decoration: none; cursor: pointer; }
-.btn.soon { background: transparent; color: var(--muted); border-style: dashed; cursor: default; }
 .btn.ghost { background: transparent; color: var(--ink); }
 .fine { font-size: 14px; color: var(--muted); }
 
@@ -154,14 +162,15 @@ h3.sub3 { font-size: 22px; margin: 8px 0 14px; }
 .next { margin-top: 28px; font-size: 16px; color: var(--muted); }
 .next strong { color: var(--ink); }
 
-/* ----- download (reserved slot) ----- */
+/* ----- download ----- */
 .download { display: grid; grid-template-columns: 1fr auto; gap: 40px; align-items: center; background: var(--ink); color: var(--cream); border-radius: 22px; padding: 36px 40px; box-shadow: 6px 6px 0 var(--shadow); }
 .download h2 { margin-bottom: 10px; }
 .download p { color: #cfe0d8; margin-bottom: 18px; }
 .download .btn { background: var(--cream); color: #23413b; border-color: var(--cream); }
-.download .btn.soon { background: transparent; color: #cfe0d8; border-color: #cfe0d8; }
-.qr { width: 168px; height: 168px; border: 2px dashed #cfe0d8; border-radius: 14px; display: grid; place-items: center; text-align: center; font-size: 13px; padding: 12px; color: #cfe0d8; }
-.qr img { width: 100%; height: 100%; display: block; border-radius: 10px; }
+.download .storebadge img { height: 48px; }
+/* The code keeps its own white quiet zone, so it reads on the dark panel and on a dark page alike. */
+.qr { display: block; width: 168px; height: 168px; border-radius: 14px; overflow: hidden; background: #fff; }
+.qr img { width: 100%; height: 100%; display: block; }
 .qrbox figcaption { margin-top: 10px; font-size: 13px; text-align: center; color: #cfe0d8; }
 .qrbox { margin: 0; }
 
@@ -199,7 +208,7 @@ footer p { margin: 0 0 8px; max-width: 760px; }
   .row.flip .text { order: 0; }
   .cards, .steps { grid-template-columns: 1fr; }
   .download { grid-template-columns: 1fr; padding: 28px 24px; }
-  .qrbox { display: none; }               /* on a phone the button is enough; the code is for people reading on a computer */
+  .qrbox, .getit .qrlink { display: none; }   /* on a phone the badge is enough; the code is for people reading on a computer */
   .top nav { display: none; }
   .top .pill { margin-left: auto; }
   .routes { grid-template-columns: repeat(2, 1fr); }

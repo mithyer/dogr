@@ -1,6 +1,8 @@
-// Worker for dogr.dev. wrangler.jsonc sends exactly three addresses here; everything else on dogr.dev is a plain file from
+// Worker for dogr.dev. wrangler.jsonc sends exactly four addresses here; everything else on dogr.dev is a plain file from
 // ./dist (built from ./site by build-site.mjs) that Cloudflare serves without running this code.
 //   /setup.sh  passes through the script that is on the main branch of the dogr repository on GitHub.
+//   /get       sends people to the app in the App Store. The download buttons and the QR code of the home page point here, so the
+//              place they lead to can change without touching the page or the printed code.
 //   /          the home page: picks a language (what the visitor picked, else the browser's, else English) and answers with it.
 //   /_geo      tells the page which language people in the visitor's country usually read, for the "Suggested" part of its menu.
 // TEST:tests/site.test.mjs
@@ -13,6 +15,11 @@ const SCRIPT_URL = "https://raw.githubusercontent.com/mithyer/dogr/main/setup.sh
 /** How long Cloudflare may keep a copy of the script, in seconds. A new push reaches people within about this time. */
 const CACHE_SECONDS = 60;
 
+/**
+ * Where /get leads: the app's page in the App Store (the address works in every country, the store picks the storefront).
+ * The number is the app record of `dev.dogr.app` in App Store Connect. It answers "not found" until the app is released.
+ */
+export const APP_STORE_URL = "https://apps.apple.com/app/id6835292499";
 /** The first line a real script has. Anything else (an HTML error page, say) must never reach `| sh`. */
 const SHEBANG = "#!/bin/sh";
 
@@ -61,6 +68,16 @@ async function setupScript(request) {
 }
 
 /**
+ * Answers a request for /get with a temporary redirect to the App Store page of the app.
+ * It is temporary (302) and never kept, because the target is expected to change (a test build, another store page).
+ * @param {Request} request The incoming request.
+ * @returns {Response} The redirect, or a plain 405 for anything but GET and HEAD.
+ */
+function getApp(request) {
+  if (request.method !== "GET" && request.method !== "HEAD") return failure(405, "Use GET.");
+  return new Response(null, { status: 302, headers: { location: APP_STORE_URL, "cache-control": "private, no-store" } });
+}
+/**
  * Answers a request for "/": the home page in the language that suits the visitor.
  * English is sent as the page itself (status 200), not as a redirect, because link-preview fetchers and crawlers send no
  * language and may not follow a redirect. Any other language is a temporary redirect (302) to its own address, which the
@@ -105,7 +122,7 @@ function geo(request) {
 
 export default {
   /**
-   * Routes the three addresses this Worker answers.
+   * Routes the four addresses this Worker answers.
    * @param {Request} request The incoming request.
    * @param {{ ASSETS: { fetch: (request: Request) => Promise<Response> } }} env The Worker bindings.
    * @returns {Promise<Response>} The answer; anything unexpected gets a plain 404.
@@ -114,6 +131,7 @@ export default {
     const { pathname } = new URL(request.url);
     if (pathname === "/setup.sh") return setupScript(request);
     if (pathname === "/_geo") return geo(request);
+    if (pathname === "/get") return getApp(request);
     if (pathname === "/") {
       try {
         return await homePage(request, env);

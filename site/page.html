@@ -23,7 +23,7 @@
 <meta property="og:description" content="{{@hero.tagline}}">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/style.css">
-<!-- TODO before release: og:image (1200x630), apple-touch-icon (180 px PNG), favicon.ico, and the apple-itunes-app banner once the app has an id. -->
+<!-- TODO before release: og:image (1200x630), apple-touch-icon (180 px PNG), favicon.ico, and the apple-itunes-app banner (app id 6835292499 is known, add it when the app is live). -->
 </head>
 <body>
 
@@ -57,7 +57,15 @@
   <div class="wrap grid">
     <div>
       <p class="eyebrow">{{hero.eyebrow}}</p>
-      <h1><span class="name">Dogr</span><span class="for">{{hero.for}}</span></h1>
+      <!-- The App Store code and badge sit at the right of the name. Both lead to https://dogr.dev/get, which the Worker sends to the
+           App Store page, so the printed code never has to change. On small screens style.css hides the code and keeps the badge. -->
+      <div class="titlerow">
+        <h1><span class="name">Dogr</span><span class="for">{{hero.for}}</span></h1>
+        <div class="getit">
+          <a class="qrlink" href="/get"><img src="/img/qr-get.svg" width="104" height="104" alt="{{@get.qrAlt}}"></a>
+          <a class="storebadge" href="/get"><img src="{{$badge}}" height="40" alt="{{@get.badgeAlt}}"></a>
+        </div>
+      </div>
       <p class="tagline">{{hero.tagline}}</p>
       <p class="sub">{{hero.sub}}</p>
       <div class="badges">
@@ -67,8 +75,6 @@
         <span class="pill">iPad</span>
       </div>
       <div class="cta">
-        <!-- RESERVED: replace with Apple's official "Download on the App Store" badge linking to https://dogr.dev/get once the app is out. -->
-        <span class="btn soon" aria-disabled="true">{{hero.soon}}</span>
         <a class="btn ghost" href="#compare">{{hero.compare}}</a>
       </div>
       <p class="fine">{{hero.fine}}</p>
@@ -260,19 +266,19 @@
   </div>
 </section>
 
-<!-- ============ download (reserved) ============ -->
+<!-- ============ download ============ -->
 <section id="download">
   <div class="wrap">
     <div class="download">
       <div>
         <h2>{{dl.h2}}</h2>
         <p>{{dl.p}}</p>
-        <!-- RESERVED: Apple's official badge goes here, linking to https://dogr.dev/get -->
-        <span class="btn soon" aria-disabled="true">{{hero.soon}}</span>
+        <!-- Apple's own badge in the language of the page, unchanged. -->
+        <a class="storebadge" href="/get"><img src="{{$badge}}" height="48" alt="{{@get.badgeAlt}}"></a>
       </div>
-      <!-- RESERVED: the QR code of https://dogr.dev/get (a static SVG made locally). Hidden on small screens. -->
+      <!-- The code of https://dogr.dev/get (a static SVG, see tools/make-qr.swift). Hidden on small screens. -->
       <figure class="qrbox">
-        <div class="qr">{{dl.qr}}</div>
+        <a class="qr" href="/get"><img src="/img/qr-get.svg" width="168" height="168" alt="{{@get.qrAlt}}" loading="lazy"></a>
         <figcaption>{{dl.scan}}</figcaption>
       </figure>
     </div>

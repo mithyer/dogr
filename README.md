@@ -381,8 +381,8 @@ twelve as the app).
 | `site/style.css`, `site/page.js`, `site/icon.svg`, `site/img/` | Styles, the copy buttons and the language menu, the icon and the screenshots |
 | `lang.js` | The twelve languages and the rules that pick one (cookie, then `Accept-Language`, then English; a country to a language). Used by the Worker, the build and the page |
 | `build-site.mjs` | Builds `dist/` (git-ignored): one page per language at `/<code>/`, `sitemap.xml`, `robots.txt` and the files above. It refuses to build when a language lacks a key, has a key too many, an empty text, other markup than English or another number |
-| `worker.js` | Answers `/setup.sh` (passes through the script on the `main` branch of this repository, kept for 60 seconds; anything that does not start with `#!/bin/sh` becomes an error status, so a broken answer never reaches `\| sh`), `/` (sends the visitor to the page in their language) and `/_geo` (a language suggested by the country of the request, nothing else) |
-| `wrangler.jsonc` | Names the Worker `dogr-site`, runs `node build-site.mjs` before every deploy, serves `dist/`, sends only `/setup.sh`, `/` and `/_geo` to `worker.js`, and attaches the domain `dogr.dev` |
+| `worker.js` | Answers `/setup.sh` (passes through the script on the `main` branch of this repository, kept for 60 seconds; anything that does not start with `#!/bin/sh` becomes an error status, so a broken answer never reaches `\| sh`), `/` (sends the visitor to the page in their language), `/get` (a temporary redirect to the app's page in the App Store, `APP_STORE_URL`; the download badges and the QR code of the home page point here, so the target can change without making the code again) and `/_geo` (a language suggested by the country of the request, nothing else) |
+| `wrangler.jsonc` | Names the Worker `dogr-site`, runs `node build-site.mjs` before every deploy, serves `dist/`, sends only `/setup.sh`, `/`, `/get` and `/_geo` to `worker.js`, and attaches the domain `dogr.dev` |
 
 How a visitor gets a language: `/` looks at the `lang` cookie (set only when someone picks a language in the menu), then at the
 browser's language list, then falls back to English; English is shown at `/` itself, any other language by a temporary
@@ -401,6 +401,13 @@ npx wrangler@4 deploy
 
 To look at it first: `node build-site.mjs`, then `npx wrangler@4 dev --local --port 8799`. The country suggestion needs the
 real Cloudflare network (`/_geo` answers `null` locally).
+
+The home page shows the App Store badge and a QR code at the right of the name and again in the download section. The badges
+are Apple's own files, unchanged, one per language (`site/img/appstore/<code>.svg`, from Apple's marketing tools; do not redraw or
+recolour them). The code is `site/img/qr-get.svg`, a static SVG of `https://dogr.dev/get` made on a Mac by
+`swift tools/make-qr.swift make https://dogr.dev/get site/img/qr-get.svg`; `swift tools/make-qr.swift check <picture> <text>`
+reads a picture of the code back (for example a rasterised copy) and fails when it does not say the text. The code never has to
+change when the App Store address does, because it holds `/get`, not the store address.
 
 The GitHub address of the script (`https://raw.githubusercontent.com/mithyer/dogr/main/setup.sh`) keeps working, because earlier
 versions of the app show it, and it stays the fallback. To take the site down, delete the Worker `dogr-site`
