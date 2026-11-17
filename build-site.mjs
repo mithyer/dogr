@@ -4,13 +4,14 @@
 //
 // Input (all in ./site): page.html (the template), i18n/strings.csv (ONE table of every text: a row per key, a column per
 // language, the same layout as the app's app-ios/Herdogr/l10n/strings.csv; the English column is the reference),
-// style.css, page.js, icon.svg and img/. Also ../lang.js, the language table that the Worker and the page share.
+// style.css, page.js, icon.svg, img/ and ios/ (the rules files of the app's update reminder, update-rules-<format>.json). Also ../lang.js, the language
+// table that the Worker and the page share.
 // The build STOPS (exit status 1) when a language lacks a text that English has, when the template asks for a string that does
 // not exist, or when a translation changes the markup or the numbers of the English text; a page that is missing a sentence
 // or has a broken link must never reach the site. wrangler.jsonc runs this file before every deploy and dev run.
 // TEST:tests/site.test.mjs
 
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { LANGUAGES } from "./lang.js";
@@ -22,7 +23,22 @@ export const ORIGIN = "https://dogr.dev";
 const ROOT = dirname(fileURLToPath(import.meta.url));
 
 /** Files and folders of `site/` that are copied to the output unchanged. */
-const STATIC_ENTRIES = ["style.css", "page.js", "icon.svg", "img"];
+const STATIC_ENTRIES = ["style.css", "page.js", "icon.svg", "img", "ios"];
+/** The folder of `site/` that holds the rules files of the iPhone app's update reminder (served under /ios/). */
+export const UPDATE_RULES_DIR = "ios";
+/**
+ * The name of the rules file of one format. The format number is part of the address, so a new format is a new file
+ * (`update-rules-2.json`) and the apps that only know the old one keep reading the old file, which stays up to date.
+ * @param {number} schema The format number.
+ * @returns {string} For example `update-rules-1.json`.
+ */
+export function updateRulesName(schema) {
+  return `update-rules-${schema}.json`;
+}
+/** The levels a rule may name, from the quietest to the loudest. */
+const UPDATE_LEVELS = ["green", "orange", "red"];
+/** A version as the app compares it: two to four numbers separated by dots (at least two, so a JSON object keeps its order). */
+const UPDATE_VERSION = /^\d+\.\d+(\.\d+){0,2}$/;
 
 /** The plain English pages (site/pages/<name>.html), each written to /<name>/. They have no language menu and no strings table. */
 export const PLAIN_PAGES = ["privacy", "support"];
@@ -324,6 +340,86 @@ export function renderPage(template, values, code) {
 }
 
 /**
+ * Compares two versions made of numbers (`0.10` is newer than `0.9`; a missing number counts as 0, so `0.2` equals `0.2.0`).
+ * @param {string} a A version that passed `UPDATE_VERSION`.
+ * @param {string} b Another one.
+ * @returns {number} Negative when `a` is older, 0 when they are the same, positive when `a` is newer.
+ */
+export function compareVersions(a, b) {
+  const left = a.split(".").map(Number);
+  const right = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(left.length, right.length); i++) {
+    const difference = (left[i] ?? 0) - (right[i] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+/**
+ * Checks the text of one update rules file. The app ignores what it does not understand, so a typo would silently turn a red
+ * reminder into nothing; the build refuses it instead.
+ * Shape: `{ "schema": <n>, "releases": { "<version>": "<level>" }, "appBelow": [ { "version": "<version>", "level": "<level>" } ] }`.
+ * @param {string} text The file's text.
+ * @param {number} [schema] The format number the file's name promises; `"schema"` inside the file must say the same.
+ * @returns {string[]} What is wrong with it; empty when it is fine.
+ */
+export function checkUpdateRules(text, schema = 1) {
+  const file = `${UPDATE_RULES_DIR}/${updateRulesName(schema)}`;
+  let rules;
+  try {
+    rules = JSON.parse(text);
+  } catch (error) {
+    return [`${file}: not valid JSON (${error.message})`];
+  }
+  const problems = [];
+  const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+  if (!isObject(rules)) return [`${file}: must be a JSON object`];
+  if (rules.schema !== schema) problems.push(`${file}: "schema" must be ${schema}, the number in the file name`);
+  if (!isObject(rules.releases)) {
+    problems.push(`${file}: "releases" must be an object`);
+  } else {
+    let previous = null;
+    for (const [version, level] of Object.entries(rules.releases)) {
+      if (!UPDATE_VERSION.test(version)) problems.push(`${file}: releases: "${version}" is not a version like 0.3 or 1.2.1`);
+      else if (previous !== null && compareVersions(previous, version) >= 0) problems.push(`${file}: releases: "${version}" must come after "${previous}"`);
+      if (!UPDATE_LEVELS.includes(level)) problems.push(`${file}: releases: "${version}" has the level ${JSON.stringify(level)}, expected green, orange or red`);
+      if (UPDATE_VERSION.test(version)) previous = version;
+    }
+  }
+  if (!Array.isArray(rules.appBelow)) {
+    problems.push(`${file}: "appBelow" must be a list`);
+  } else {
+    let previous = null;
+    for (const [index, entry] of rules.appBelow.entries()) {
+      if (!isObject(entry) || !UPDATE_VERSION.test(entry.version ?? "")) {
+        problems.push(`${file}: appBelow[${index}] needs a "version" like 0.3`);
+        continue;
+      }
+      if (!UPDATE_LEVELS.includes(entry.level)) problems.push(`${file}: appBelow[${index}] has the level ${JSON.stringify(entry.level)}, expected green, orange or red`);
+      if (previous !== null && compareVersions(previous, entry.version) >= 0) problems.push(`${file}: appBelow[${index}] must come after "${previous}"`);
+      previous = entry.version;
+    }
+  }
+  return problems;
+}
+/**
+ * Checks every file in the rules folder: each one must be named `update-rules-<n>.json` and be good, and format 1 (the one the
+ * first app reads) must exist. A file with any other name is refused, because a typo in a name would hide a rule from the app.
+ * @param {string} sourceDir The `site` folder.
+ * @returns {string[]} What is wrong; empty when all is fine.
+ */
+export function checkUpdateRulesFolder(sourceDir) {
+  const folder = join(sourceDir, UPDATE_RULES_DIR);
+  const names = existsSync(folder) ? readdirSync(folder) : [];
+  const problems = [];
+  if (!names.includes(updateRulesName(1))) problems.push(`${UPDATE_RULES_DIR}/${updateRulesName(1)}: missing`);
+  for (const name of names.sort()) {
+    const schema = /^update-rules-([1-9]\d*)\.json$/.exec(name)?.[1];
+    if (schema === undefined) problems.push(`${UPDATE_RULES_DIR}/${name}: not a rules file (they are named update-rules-<number>.json)`);
+    else problems.push(...checkUpdateRules(readFileSync(join(folder, name), "utf8"), Number(schema)));
+  }
+  return problems;
+}
+/**
  * The sitemap: every language page, each listing all its alternates.
  * @returns {string} The XML text.
  */
@@ -356,6 +452,7 @@ export function build({ sourceDir = join(ROOT, "site"), outDir = join(ROOT, "dis
   const template = readFileSync(join(sourceDir, "page.html"), "utf8");
   const { strings, problems } = loadStrings(join(sourceDir, "i18n", "strings.csv"));
   problems.push(...checkStrings(strings, template));
+  problems.push(...checkUpdateRulesFolder(sourceDir));
   if (problems.length > 0) return { pages: [], problems };
 
   rmSync(outDir, { recursive: true, force: true });

@@ -379,6 +379,7 @@ twelve as the app).
 | `site/page.html` | The page template. `{{key}}` is replaced by a string of the language, `{{@key}}` by the same string as plain text (for attributes) |
 | `site/i18n/strings.csv` | Every text of the page, one row per key, one column per language (`key,en,de,es,ko,ja,zh,zh-TW,ru,it,fr,pt,tr`, the order of the app's table). Edit this file, never the generated pages |
 | `site/style.css`, `site/page.js`, `site/icon.svg`, `site/img/` | Styles, the copy buttons and the language menu, the icon and the screenshots |
+| `site/ios/update-rules-<n>.json` | The rules the iPhone app reads to decide how strongly to suggest an update (see below). `<n>` is the format number |
 | `lang.js` | The twelve languages and the rules that pick one (cookie, then `Accept-Language`, then English; a country to a language). Used by the Worker, the build and the page |
 | `build-site.mjs` | Builds `dist/` (git-ignored): one page per language at `/<code>/`, `sitemap.xml`, `robots.txt` and the files above. It refuses to build when a language lacks a key, has a key too many, an empty text, other markup than English or another number |
 | `worker.js` | Answers `/setup.sh` (passes through the script on the `main` branch of this repository, kept for 60 seconds; anything that does not start with `#!/bin/sh` becomes an error status, so a broken answer never reaches `\| sh`), `/` (sends the visitor to the page in their language), `/get` (a temporary redirect to the app's page in the App Store, `APP_STORE_URL`; the download badges and the QR code of the home page point here, so the target can change without making the code again) and `/_geo` (a language suggested by the country of the request, nothing else) |
@@ -409,6 +410,18 @@ recolour them). The code is `site/img/qr-get.svg`, a static SVG of `https://dogr
 reads a picture of the code back (for example a rasterised copy) and fails when it does not say the text. The code never has to
 change when the App Store address does, because it holds `/get`, not the store address.
 
+The iPhone app's update reminder reads a small public file, `https://dogr.dev/ios/update-rules-1.json`, and only when the App
+Store has a newer version than the one installed (at most once a day). It sends nothing from the phone: no account, no version, no
+device identifier. The file says how loud each release is, and the app does the comparing:
+```json
+{ "schema": 1, "releases": { "0.3": "orange", "0.4": "green", "0.5": "red" }, "appBelow": [ { "version": "0.3", "level": "orange" } ] }
+```
+`releases` gives the level of each release (`green` is a note in Settings, `orange` a suggestion, `red` a strong one); an app that is
+several releases behind gets the highest level among the releases it missed. `appBelow` raises the level for every app older than
+the given version. A release that is not listed counts as `green`. The number in the file name is the format: a change that an old
+app could not read goes into a new file (`update-rules-2.json`), and the old file stays and keeps being updated, so old apps keep
+working. `node build-site.mjs` refuses a file that is not valid (bad version or level, a list out of order, a `schema` that
+differs from the file name, any other file name in `site/ios/`).
 The GitHub address of the script (`https://raw.githubusercontent.com/mithyer/dogr/main/setup.sh`) keeps working, because earlier
 versions of the app show it, and it stays the fallback. To take the site down, delete the Worker `dogr-site`
 in the Cloudflare dashboard (Workers & Pages); nothing else depends on it.

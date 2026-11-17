@@ -3,13 +3,27 @@
 // No network and no Cloudflare: the Worker is called with plain Request objects and a stand-in for the file store.
 
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { PLAIN_PAGES, build, checkStrings, loadStrings, parseCsv, placeholdersOf, renderPage, sitemap } from "../build-site.mjs";
+import {
+  PLAIN_PAGES,
+  UPDATE_RULES_DIR,
+  build,
+  checkStrings,
+  checkUpdateRules,
+  checkUpdateRulesFolder,
+  compareVersions,
+  loadStrings,
+  parseCsv,
+  placeholdersOf,
+  renderPage,
+  sitemap,
+  updateRulesName,
+} from "../build-site.mjs";
 import {
   COUNTRY_LANGUAGE,
   LANGUAGES,
@@ -274,6 +288,77 @@ describe("the string table (CSV)", () => {
   });
 });
 
+describe("the update rules file of the app", () => {
+  const good = JSON.stringify({
+    schema: 1,
+    releases: { "0.3": "orange", "0.4": "green", "0.5.1": "red" },
+    appBelow: [{ version: "0.3", level: "orange" }, { version: "0.10", level: "red" }],
+  });
+  test("versions are compared as numbers, not as text", () => {
+    assert.ok(compareVersions("0.10", "0.9") > 0);
+    assert.equal(compareVersions("0.2", "0.2.0"), 0);
+    assert.ok(compareVersions("1.0", "0.99.9") > 0);
+    assert.ok(compareVersions("0.2.1", "0.3") < 0);
+  });
+  test("the format number is part of the file name, and the real folder passes", () => {
+    assert.equal(updateRulesName(1), "update-rules-1.json");
+    assert.equal(updateRulesName(2), "update-rules-2.json");
+    assert.deepEqual(checkUpdateRulesFolder(join(ROOT, "site")), []);
+    assert.deepEqual(checkUpdateRules(good), []);
+  });
+  test("every file of the folder is built to /ios/ unchanged, so old apps keep their old format", () => {
+    const out = mkdtempSync(join(tmpdir(), "dogr-rules-"));
+    try {
+      assert.deepEqual(build({ outDir: out }).problems, []);
+      const folder = join(ROOT, "site", UPDATE_RULES_DIR);
+      assert.ok(readdirSync(folder).includes(updateRulesName(1)));
+      for (const name of readdirSync(folder)) {
+        assert.equal(readFileSync(join(out, UPDATE_RULES_DIR, name), "utf8"), readFileSync(join(folder, name), "utf8"), name);
+      }
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+  test("the folder check wants format 1, refuses odd names, and checks the number inside against the name", () => {
+    const site = mkdtempSync(join(tmpdir(), "dogr-rules-site-"));
+    try {
+      const folder = join(site, UPDATE_RULES_DIR);
+      mkdirSync(folder);
+      assert.match(checkUpdateRulesFolder(site)[0], /update-rules-1\.json: missing/);
+      writeFileSync(join(folder, "update-rules-1.json"), good);
+      assert.deepEqual(checkUpdateRulesFolder(site), []);
+      // A second format sits beside the first, and is checked on its own number.
+      writeFileSync(join(folder, "update-rules-2.json"), good.replace('"schema":1', '"schema":2'));
+      assert.deepEqual(checkUpdateRulesFolder(site), []);
+      writeFileSync(join(folder, "update-rules-3.json"), good);
+      assert.match(checkUpdateRulesFolder(site)[0], /update-rules-3\.json: "schema" must be 3/);
+      rmSync(join(folder, "update-rules-3.json"));
+      writeFileSync(join(folder, "update-rule-4.json"), good);
+      assert.match(checkUpdateRulesFolder(site)[0], /update-rule-4\.json: not a rules file/);
+    } finally {
+      rmSync(site, { recursive: true, force: true });
+    }
+  });
+  test("a broken file is refused, so a typo cannot turn a red reminder into nothing", () => {
+    const edit = (change) => {
+      const rules = JSON.parse(good);
+      change(rules);
+      return checkUpdateRules(JSON.stringify(rules));
+    };
+    assert.match(checkUpdateRules("{nope")[0], /not valid JSON/);
+    assert.match(checkUpdateRules("[]")[0], /must be a JSON object/);
+    assert.match(edit((r) => { r.schema = 2; })[0], /"schema" must be 1, the number in the file name/);
+    assert.match(edit((r) => { r.releases["0.4"] = "reed"; })[0], /expected green, orange or red/);
+    assert.match(edit((r) => { r.releases["3"] = "red"; })[0], /not a version/);
+    assert.match(edit((r) => { r.releases["0.3.x"] = "red"; })[0], /not a version/);
+    assert.match(edit((r) => { delete r.releases["0.4"]; r.releases["0.2"] = "red"; })[0], /must come after/);
+    assert.match(edit((r) => { r.appBelow = {}; })[0], /"appBelow" must be a list/);
+    assert.match(edit((r) => { r.appBelow[0].level = "blue"; })[0], /appBelow\[0\] has the level/);
+    assert.match(edit((r) => { r.appBelow.reverse(); })[0], /must come after/);
+    assert.match(edit((r) => { r.appBelow.push({ level: "red" }); })[0], /needs a "version"/);
+    assert.match(edit((r) => { r.releases = []; })[0], /"releases" must be an object/);
+  });
+});
 describe("the real site", () => {
   const out = mkdtempSync(join(tmpdir(), "dogr-site-"));
   after(() => rmSync(out, { recursive: true, force: true }));
