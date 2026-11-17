@@ -55,7 +55,9 @@
 
   <h2>Update reminders</h2>
   <p>The app asks Apple's public App Store lookup service which version of Dogr is the newest, so it can tell you when an update is
-  waiting. That request goes to Apple, as any App Store request does, and I do not see it. Only when a newer version exists, the app
+  waiting and show you what is new in it. The request names Dogr, the country of the phone's region setting and the language the app is
+  shown in (so the "What's New" text comes in that language); it carries no version number of the installed app. It goes to Apple, as any
+  App Store request does, and I do not see it. Only when a newer version exists, the app
   also reads one small public file from dogr.dev (<code>/ios/update-rules-1.json</code>), at most once a day, to learn how strongly to
   suggest the update. Reading that file sends no account, no device identifier and no version number from the phone; the app compares
   versions on the phone itself. Like any website, dogr.dev can see the address a request comes from while it answers it.</p>
