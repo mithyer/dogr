@@ -155,8 +155,23 @@ h3.sub3 { font-size: 22px; margin: 8px 0 14px; }
 .author blockquote p { margin-bottom: 14px; }
 
 /* ----- feedback ----- */
-.channels { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 8px; }
+/* Five cards: the first three (in the app, email, GitHub) share a row, the two groups to join (Discord, Telegram) share the row
+   under it, each half as wide as the row. A narrow screen gives two columns, then one. */
+.channels { display: grid; grid-template-columns: repeat(6, 1fr); gap: 16px; margin-top: 8px; }
+.channels .channel { grid-column: span 2; }
+.channels .channel:nth-child(n+4) { grid-column: span 3; }
+@media (max-width: 860px) {
+  .channels { grid-template-columns: repeat(2, 1fr); }
+  .channels .channel, .channels .channel:nth-child(n+4) { grid-column: span 1; }
+}
+@media (max-width: 560px) {
+  .channels { grid-template-columns: 1fr; }
+}
 .channel { background: var(--card); border: 2px solid var(--ink); border-radius: 14px; padding: 18px; }
+/* A group card with the code of its invite link at the right of the text. */
+.channel.withqr { display: flex; gap: 16px; justify-content: space-between; align-items: flex-start; }
+.chanqr { flex: none; display: block; width: 104px; height: 104px; border-radius: 12px; overflow: hidden; border: 2px solid var(--ink); background: #fff; }
+.chanqr img { display: block; width: 100%; height: 100%; }
 .channel h3 { font-size: 17px; margin-bottom: 6px; }
 .channel p { margin: 0; font-size: 15.5px; color: var(--muted); }
 .next { margin-top: 28px; font-size: 16px; color: var(--muted); }
@@ -208,7 +223,7 @@ footer p { margin: 0 0 8px; max-width: 760px; }
   .row.flip .text { order: 0; }
   .cards, .steps { grid-template-columns: 1fr; }
   .download { grid-template-columns: 1fr; padding: 28px 24px; }
-  .qrbox, .getit .qrlink { display: none; }   /* on a phone the badge is enough; the code is for people reading on a computer */
+  .qrbox, .getit .qrlink, .chanqr { display: none; }   /* on a phone the badge is enough; the code is for people reading on a computer */
   .top nav { display: none; }
   .top .pill { margin-left: auto; }
   .routes { grid-template-columns: repeat(2, 1fr); }

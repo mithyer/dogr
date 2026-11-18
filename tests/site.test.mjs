@@ -436,6 +436,21 @@ describe("the real site", () => {
     assert.ok(!/<script|<image|<foreignObject|href=|onload/i.test(svg), "nothing active or outside");
     assert.ok(svg.length < 20000, "small enough to inline-load");
   });
+  test("the two group cards carry a valid static code of their invite link", () => {
+    for (const { code } of LANGUAGES) {
+      const page = readFileSync(join(out, code, "index.html"), "utf8");
+      const feedback = page.slice(page.indexOf('id="feedback"'), page.indexOf('<section id="download">'));
+      assert.match(feedback, /<a class="chanqr" href="https:\/\/discord\.gg\/[A-Za-z0-9]+"><img src="\/img\/qr-discord\.svg"[^>]* alt="[^"]+"/, `${code}: the Discord code`);
+      assert.match(feedback, /<a class="chanqr" href="https:\/\/t\.me\/[A-Za-z0-9_]+"><img src="\/img\/qr-telegram\.svg"[^>]* alt="[^"]+"/, `${code}: the Telegram code`);
+    }
+    for (const name of ["qr-discord.svg", "qr-telegram.svg"]) {
+      const svg = readFileSync(join(ROOT, "site", "img", name), "utf8");
+      const box = svg.match(/viewBox="0 0 (\d+) (\d+)"/);
+      assert.ok(box && box[1] === box[2] && Number(box[1]) >= 29, `${name}: a square box with a quiet zone`);
+      assert.equal((svg.match(/<path /g) ?? []).length, 1, `${name}: the dark modules are one path`);
+      assert.ok(!/<script|<image|<foreignObject|href=|onload/i.test(svg), `${name}: nothing active or outside`);
+    }
+  });
   test("the App Store badges are one unchanged static SVG per language", () => {
     const dir = join(ROOT, "site", "img", "appstore");
     assert.deepEqual(readdirSync(dir).sort(), LANGUAGES.map(({ code }) => `${code}.svg`).sort());

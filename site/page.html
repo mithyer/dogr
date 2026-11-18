@@ -260,7 +260,11 @@
       <div class="channel"><h3>{{fb.c1.h}}</h3><p>{{fb.c1.p}}</p></div>
       <div class="channel"><h3>{{fb.c2.h}}</h3><p>{{fb.c2.p}}</p></div>
       <div class="channel"><h3>{{fb.c3.h}}</h3><p>{{fb.c3.p}}</p></div>
-      <!-- RESERVED: a fourth channel, a public place to discuss (GitHub Discussions on the dogr repository), once it is switched on. -->
+      <!-- The two groups people can join (invite links, not accounts of ours; the links are the same in every language). -->
+      <!-- The two group cards also carry a code of the invite link (static SVGs, see tools/make-qr.swift), for people reading on a computer. Hidden on small screens. -->
+      <div class="channel withqr"><div><h3>{{fb.c4.h}}</h3><p>{{fb.c4.p}}</p></div><a class="chanqr" href="https://discord.gg/dprTGeM7U"><img src="/img/qr-discord.svg" width="104" height="104" alt="{{@fb.c4.qrAlt}}" loading="lazy"></a></div>
+      <div class="channel withqr"><div><h3>{{fb.c5.h}}</h3><p>{{fb.c5.p}}</p></div><a class="chanqr" href="https://t.me/herdogr"><img src="/img/qr-telegram.svg" width="104" height="104" alt="{{@fb.c5.qrAlt}}" loading="lazy"></a></div>
+      <!-- RESERVED: another channel, a public place to discuss (GitHub Discussions on the dogr repository), once it is switched on. -->
     </div>
     <p class="next">{{fb.next}}</p>
   </div>
@@ -292,9 +296,9 @@
     <div class="links">
       <a href="/privacy/">{{footer.privacyLink}}</a>
       <a href="/support/">{{footer.supportLink}}</a>
-      <a href="mailto:fb@dogr.dev">fb@dogr.dev</a>
       <a href="https://github.com/mithyer/dogr">{{footer.setup}}</a>
-      <a href="https://github.com/mithyer">{{footer.github}}</a>
+      <!-- Ways to reach the author in one place: email, GitHub profile and the two groups (names of services, so no translation). -->
+      <span class="contact"><a href="mailto:fb@dogr.dev">fb@dogr.dev</a> · <a href="https://github.com/mithyer">GitHub</a> · <a href="https://discord.gg/dprTGeM7U">Discord</a> · <a href="https://t.me/herdogr">Telegram</a></span>
     </div>
     <p>{{footer.indep}}</p>
     <p>{{footer.privacy}}</p>
