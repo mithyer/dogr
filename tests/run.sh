@@ -135,6 +135,33 @@ case $1 in
         printf '{"running":true,"version":"1.27.0","instance":"default","port":8787,"mux":"%s","localUrl":"%s","phoneUrl":%s,"pairedDevices":0}\n' \
             "${STUB_MUX_REPORT:-$mux}" "$STUB_LOCAL_URL" "$phone"
         ;;
+    push-keys)
+        # What the real one does (shapes from collie/cli/push-keys.ts): STUB_PUSH_KEYS=new writes the key pair into the .env, and
+        # refuses when the .env has both already; STUB_PUSH_KEYS=fail breaks. Left unset it refuses the way a Herdr-managed install
+        # does, where the keys sit in a file this script cannot see, so every other case runs as it did before this step existed.
+        envf=$HOME/.config/collie/.env
+        have=0
+        if grep -q '^COLLIE_VAPID_PUBLIC=' "$envf" 2>/dev/null && grep -q '^COLLIE_VAPID_PRIVATE=' "$envf" 2>/dev/null; then have=1; fi
+        if [ "${STUB_PUSH_KEYS:-hidden}" = fail ]; then
+            echo "✗ could not write $envf"
+            exit 1
+        fi
+        if [ "${STUB_PUSH_KEYS:-hidden}" != new ] || [ "$have" = 1 ]; then
+            echo "✗ push keys are already configured in $envf" >&2
+            echo "  Replacing them invalidates EVERY existing subscription: each device must open Collie and" >&2
+            echo "  If that's what you want: \`collie push-keys --force\`." >&2
+            exit 1
+        fi
+        mkdir -p "$HOME/.config/collie"
+        (umask 077; printf 'COLLIE_VAPID_PUBLIC=stub-public\nCOLLIE_VAPID_PRIVATE=stub-private\n' >>"$envf")
+        echo "✓ wrote COLLIE_VAPID_PUBLIC / _PRIVATE to $envf (mode 600)"
+        echo "  subject: mailto:push@collie.invalid (default — pass one to set your own)"
+        echo ""
+        echo "Next:"
+        echo "  1. collie restart"
+        echo "  2. On your phone: open Collie → Settings → enable notifications"
+        echo "  3. collie push test"
+        ;;
     pair)
         echo "ABCD2345"
         echo ""
@@ -2323,6 +2350,87 @@ run_case "progress: the tailcat download" STUB_OS=Linux STUB_ARCH=x86_64 DOGR_PR
 expect_rc 0
 expect_called "curl -D"
 expect_called "download https://github.com/tailscale/tailcat/releases/download/v0.7.0/tailcat_0.7.0_linux_amd64.tar.gz"
+
+# ---- the push keys ------------------------------------------------------------------------------------------------------
+# Collie's push is off until its .env holds a key pair. The script makes them with `collie push-keys` before the first start.
+
+# A new install: the keys are written before Collie ever runs, so nothing needs a restart. The "Next:" steps are not repeated.
+run_case "push keys: made before the first start" COLLIE_INSTALLED=0 STUB_PUSH_KEYS=new -- --tailscale --yes
+expect_rc 0
+expect_out "Make Collie's push keys with 'collie push-keys'"
+expect_out "wrote COLLIE_VAPID_PUBLIC"
+expect_no_out "Next:"
+expect_no_out "collie push test"
+expect_env_line "COLLIE_VAPID_PUBLIC=stub-public"
+expect_order "collie push-keys" "collie start"
+expect_not_called "collie restart"
+
+# A Collie that is installed may be running without the keys: it is restarted once, after they are written.
+run_case "push keys: an installed Collie is restarted" STUB_PUSH_KEYS=new -- --tailscale --yes
+expect_rc 0
+expect_env_line "COLLIE_VAPID_PRIVATE=stub-private"
+expect_order "collie push-keys" "collie restart"
+expect_count "collie restart" 1
+expect_out "Restarting Collie so it reads the changed settings"
+
+# Another route that changes the .env as well still restarts only once.
+run_case "push keys: with the settings of a route, one restart" STUB_PUSH_KEYS=new -- --lan --host 192.168.1.20 --yes
+expect_rc 0
+expect_env_line "COLLIE_VAPID_PUBLIC=stub-public"
+expect_env_line "COLLIE_SKIP_SERVE=1"
+expect_count "collie restart" 1
+
+# Keys that are there are never replaced and never asked for again: no call, no restart.
+run_case "push keys: already in the .env" STUB_PUSH_KEYS=new ENVFILE="COLLIE_VAPID_PUBLIC=old-public
+COLLIE_VAPID_PRIVATE=old-private" -- --tailscale --yes
+expect_rc 0
+expect_out "push keys are already in"
+expect_not_called "collie push-keys"
+expect_not_called "collie restart"
+expect_env_line "COLLIE_VAPID_PRIVATE=old-private"
+
+# Only half a pair is not a pair: Collie's own command decides what to do with it.
+run_case "push keys: half a pair" STUB_PUSH_KEYS=new ENVFILE="COLLIE_VAPID_PUBLIC=old-public" -- --tailscale --yes
+expect_rc 0
+expect_out "Make Collie's push keys with 'collie push-keys'"
+expect_called "collie push-keys"
+
+# Keys that sit in a .env the script cannot see (Herdr-managed installs): Collie refuses, the script says so and goes on.
+run_case "push keys: Collie says they are there" -- --tailscale --yes
+expect_rc 0
+expect_called "collie push-keys"
+expect_out "Collie already has push keys; they are left as they are."
+expect_no_out "were not made"
+expect_not_called "collie restart"
+
+# A failure is not fatal: the rest of the setup works without notifications, and the warning says how to finish.
+run_case "push keys: a failure only warns" STUB_PUSH_KEYS=fail -- --tailscale --yes
+expect_rc 0
+expect_out "could not write"
+expect_out "warning: the push keys were not made (exit 1)"
+expect_out "run 'collie push-keys' and then 'collie restart'"
+expect_called "collie pair"
+expect_not_called "collie restart"
+
+# --no-push leaves Collie's push alone, and the plan does not mention it.
+run_case "push keys: --no-push" STUB_PUSH_KEYS=new -- --tailscale --no-push --yes
+expect_rc 0
+expect_not_called "collie push-keys"
+expect_no_out "push keys"
+expect_no_env_line "COLLIE_VAPID_PUBLIC=stub-public"
+expect_not_called "collie restart"
+
+# A dry run says what would happen and writes nothing.
+run_case "push keys: dry run" STUB_PUSH_KEYS=new -- --tailscale --dry-run
+expect_rc 0
+expect_out "Make Collie's push keys with 'collie push-keys'"
+expect_not_called "collie push-keys"
+expect_no_env_line "COLLIE_VAPID_PUBLIC=stub-public"
+
+# The usage text names the option.
+run_case "push keys: usage" -- --help
+expect_rc 0
+expect_out "--no-push"
 
 
 # ---- shellcheck, when it is there -----------------------------------------------------------------------------------------

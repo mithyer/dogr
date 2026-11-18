@@ -19,6 +19,8 @@
 # other terminal program than the one you picked; on a tailnet without HTTPS certificates (Headscale, for one)
 # COLLIE_SERVE_MODE=http (with your agreement or --http); and for --proxy and --lan the settings that route needs
 # (COLLIE_SKIP_SERVE, COLLIE_PUBLIC_URL and friends). A line that is there is replaced where it stands, a missing one is added.
+# Before Collie starts, `collie push-keys` adds the two lines that switch Collie's push on (COLLIE_VAPID_PUBLIC and COLLIE_VAPID_PRIVATE),
+# unless the .env has them already (they are never replaced) or --no-push was given; without them the phone's notifications never arrive.
 # The tailcat and iroh routes also write a service file and a log, and the ssh route may write one line of ~/.ssh/authorized_keys
 # (see the README for where, and how to undo it).
 #
@@ -144,6 +146,12 @@ main() {
     HTTP_OK=0
     # 1 once this run has added COLLIE_SERVE_MODE=http to Collie's .env
     SWITCHED=0
+    # 1 unless --no-push: the run makes Collie's push keys when its .env has none (without them Collie's push stays off)
+    PUSH_KEYS=1
+    # 1 when the plan says the keys will be made (the .env has none yet and --no-push was not given)
+    PUSH_PLAN=0
+    # 1 once `collie push-keys` has written the keys: a Collie that was already running has not read them yet
+    PUSH_WRITTEN=0
     # 1 once the terminal is open on file descriptor 3, so every answer comes from the next line of it
     TTY_OPEN=0
     # the file Collie reads its settings from (a standalone install; see the README for installs that Herdr manages)
@@ -298,7 +306,7 @@ WRAPPER
         cat <<'EOF'
 Usage: setup.sh [--tailscale | --tailcat [--derpmap-url URL] [--region NAME] | --iroh [--relay-url URL] | --ssh [--ssh-port N] [--ssh-key KEY]
                 | --proxy --url URL | --lan [--host ADDRESS]]
-                [--mux herdr|herdr-core] [--http] [--from CLIENT] [--yes] [--dry-run] [--help]
+                [--mux herdr|herdr-core] [--http] [--no-push] [--from CLIENT] [--yes] [--dry-run] [--help]
 
 Puts Collie on this computer, sets it up for the way your phone reaches it, and shows a QR code that pairs your phone.
 Without --tailscale, --tailcat, --iroh, --ssh, --proxy or --lan the script asks which way you use.
@@ -343,6 +351,10 @@ Without --tailscale, --tailcat, --iroh, --ssh, --proxy or --lan the script asks 
                 tailnet instead. Tailscale still encrypts the traffic between your devices. This adds the line
                 COLLIE_SERVE_MODE=http to Collie's .env. Without this option the script asks first, and with --yes
                 and no terminal it stops instead of switching by itself.
+  --no-push     Do not make Collie's push keys. By default, when Collie's .env has no push keys yet, the script runs
+                'collie push-keys': it adds two lines (COLLIE_VAPID_PUBLIC and COLLIE_VAPID_PRIVATE) to Collie's .env, private
+                to you. Without them Collie never sends a notification to the phone, whatever the app says. Nothing is sent
+                anywhere until you switch notifications on in the app. Keys that are already there are never replaced.
   --from CLIENT Which app asked for this script, as the platform and the version joined by a v, for example iosv0.2. The Dogr
                 app puts it in the command it shows. It only says who is asking, so a later script can treat an older app
                 differently; nothing else changes. Leave it out when you run the script by hand.
@@ -1567,6 +1579,7 @@ EOF
                 ;;
             --from=*) FROM=${1#--from=} ;;
             --http) HTTP_OK=1 ;;
+            --no-push) PUSH_KEYS=0 ;;
             --yes | -y) ASSUME_YES=1 ;;
             --dry-run) DRY_RUN=1 ;;
             --help | -h)
@@ -1704,6 +1717,16 @@ EOF
     if [ "$ROUTE" = iroh ]; then plan_iroh; fi
     if [ "$ROUTE" = ssh ]; then plan_ssh; fi
     if [ "$ROUTE" != tailscale ]; then plan_settings; fi
+    # Collie's push is off until its .env holds a key pair, and no step of the app can make one on the computer, so the phone
+    # would say "notifications on" and never get one. The keys are made before the first start, so a new install needs no restart.
+    if [ "$PUSH_KEYS" = 1 ]; then
+        if [ -n "$(env_get COLLIE_VAPID_PUBLIC)" ] && [ -n "$(env_get COLLIE_VAPID_PRIVATE)" ]; then
+            plan "Collie's push keys are already in $ENV_FILE; they are left as they are."
+        else
+            PUSH_PLAN=1
+            plan "Make Collie's push keys with 'collie push-keys' (COLLIE_VAPID_PUBLIC and COLLIE_VAPID_PRIVATE, added to $ENV_FILE, private to you) so that notifications can reach your phone. Nothing is sent anywhere until you switch them on in the app; keys that are already there are never replaced. Skip it with --no-push."
+        fi
+    fi
     case $ROUTE in
         tailscale)
             plan "Start Collie in the background (launchd on macOS, systemd --user on Linux), driving $MUX."
@@ -1864,6 +1887,25 @@ EOF
     if [ "$ROUTE" = iroh ]; then setup_iroh; fi
     if [ "$ROUTE" = ssh ]; then setup_ssh; fi
     if [ "$ROUTE" != tailscale ]; then apply_settings; fi
+    # The push keys. `collie push-keys` writes into the .env Collie really reads (which may not be $ENV_FILE when Herdr manages the
+    # install) and refuses to replace keys that are there, so running it is also the safe way to find out. A failure here is
+    # not fatal: everything else works without notifications, and the message says how to finish by hand.
+    if [ "$PUSH_PLAN" = 1 ]; then
+        say ""
+        say "==> Making Collie's push keys"
+        push_out=$(collie push-keys </dev/null 2>&1)
+        push_rc=$?
+        if [ "$push_rc" = 0 ]; then
+            PUSH_WRITTEN=1
+            # Only what was done: the "Next:" steps that Collie prints are the app's job (and this script restarts Collie itself).
+            printf '%s\n' "$push_out" | sed -n '/^Next:/q; /^[[:space:]]*$/d; p'
+        elif printf '%s\n' "$push_out" | grep -q 'already configured'; then
+            say "  Collie already has push keys; they are left as they are."
+        else
+            printf '%s\n' "$push_out" | sed 's/^/  /'
+            warn "the push keys were not made (exit $push_rc), so notifications cannot reach your phone yet. Everything else works. To finish, run 'collie push-keys' and then 'collie restart'."
+        fi
+    fi
 
     # Step 3: start Collie. It prints lines starting with "setup:" for what is missing; it never stops on them itself.
     say ""
@@ -1873,8 +1915,10 @@ EOF
     run_collie start
     # A running Collie may have started before a setting changed, so it is restarted to read it. A Collie that this run
     # installed was never running, so its first start has read everything. A Collie that was switched to the Dogr build is
-    # still running as the old program until it is restarted.
-    if [ "$ENV_CHANGED" = 1 ] || [ "$COLLIE_SWITCHED" = 1 ] || { [ "$ENV_TOUCHED" = 1 ] && [ "$WAS_INSTALLED" = 1 ]; }; then
+    # still running as the old program until it is restarted. Push keys written into a Collie that was already installed (and so may
+    # be running) are read only after a restart too.
+    if [ "$ENV_CHANGED" = 1 ] || [ "$COLLIE_SWITCHED" = 1 ] || { [ "$ENV_TOUCHED" = 1 ] && [ "$WAS_INSTALLED" = 1 ]; } \
+        || { [ "$PUSH_WRITTEN" = 1 ] && [ "$WAS_INSTALLED" = 1 ]; }; then
         say ""
         if [ "$COLLIE_SWITCHED" = 1 ]; then
             say "==> Restarting Collie so the Dogr build runs"

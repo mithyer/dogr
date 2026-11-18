@@ -22,14 +22,17 @@ once. Then it:
 2. makes sure the terminal program Collie drives is there and running: **herdr** (the terminal app) or **herdr-core** (a
    background service). One that is missing is installed with its own installer; herdr-core is started with `hc server
    start`; herdr has to be opened by you, and the script says how when it is not;
-3. runs `collie start`, which starts Collie in the background. Over Tailscale it also publishes Collie on your tailnet
+3. makes Collie's push keys with `collie push-keys` (two lines in Collie's `.env`), unless they are there already or `--no-push` is given:
+   without them Collie never sends a notification to your phone, whatever the app says. Nothing is sent anywhere until you switch
+   notifications on in the app, and keys that are already there are never replaced;
+4. runs `collie start`, which starts Collie in the background. Over Tailscale it also publishes Collie on your tailnet
    (`tailscale serve`); with `--tailcat`, `--iroh`, `--proxy` or `--lan` Collie publishes nothing itself (for tailcat the script
    first installs tailcat, makes a saved key and runs `tailcat serve` as a background service of your own user, see
    [the tailcat route](#the-tailcat-route); for iroh it installs dumbpipe, makes two saved secrets and runs `dumbpipe listen-tcp`
    the same way, see [the iroh route](#the-iroh-route));
-4. checks that Collie answers where your phone will look for it (its Tailscale address, your proxy's address, or this
+5. checks that Collie answers where your phone will look for it (its Tailscale address, your proxy's address, or this
    computer's local-network address), and that it drives the program you picked;
-5. runs `collie pair` last, so the one-time code still has all of its ten minutes left, and shows it as a QR code.
+6. runs `collie pair` last, so the one-time code still has all of its ten minutes left, and shows it as a QR code.
 
 Which terminal program? `--mux herdr` or `--mux herdr-core` decides. Without it the script asks, and marks the one that is
 already installed; with no terminal to ask on it stops and tells you to add `--mux`. The Dogr app shows the same choice next
@@ -265,6 +268,7 @@ curl -fsSL https://dogr.dev/setup.sh | sh -s -- --tailscale --yes
 | `--from iosv0.2` | Which app asked for this script: the platform and the version joined by a `v`. The Dogr app puts it at the end of the command it shows. The script prints one line ("Started by the Dogr app (iosv0.2).") and does nothing else with it yet; it exists so a later script can treat an older app differently. Only letters, digits, dots, dashes, `_` and `+` are accepted. Leave it out when you run the script by hand. |
 | `--yes`, `-y` | Do not ask before changing anything. Needed when there is no terminal. Does not agree to `http://` addresses; use `--http` for that. |
 | `--http` | If your tailnet has no HTTPS certificates, switch Collie to `http://` addresses (`COLLIE_SERVE_MODE=http`) without asking. |
+| `--no-push` | Do not make Collie's push keys (`collie push-keys`). Without keys Collie's push stays off and the phone gets no notifications; you can make them later by hand (see below). |
 | `--dry-run` | Say what would happen, change nothing, stop. |
 | `--help`, `-h` | Show the usage text. |
 
@@ -318,6 +322,7 @@ Only what Collie's own commands change:
 | For `--iroh`: the settings of that route | `COLLIE_SKIP_SERVE=1`, `COLLIE_PUBLIC_HOSTS=127.0.0.1:<port>` and `COLLIE_PUBLIC_URL=http://iroh.invalid/<iroh address>` in `~/.config/collie/.env`; a wide `COLLIE_HOST` goes back to `127.0.0.1`. The plan shows the address as `<your iroh address>`, and so does the script's own output. |
 | For `--ssh --ssh-key`: one line | `~/.ssh/authorized_keys` (the folder mode 700, the file mode 600), ending in the comment `dogr-phone` |
 | For `--ssh`: the settings of that route | `COLLIE_SKIP_SERVE=1`, `COLLIE_PUBLIC_HOSTS=127.0.0.1:<port>` and `COLLIE_PUBLIC_URL=http://ssh.invalid/<ssh port>:<fingerprint>:<port>:<user>` in `~/.config/collie/.env`; a wide `COLLIE_HOST` goes back to `127.0.0.1`. |
+| Two lines, unless the `.env` has them already or you gave `--no-push` | `COLLIE_VAPID_PUBLIC` and `COLLIE_VAPID_PRIVATE`, written by Collie's own `collie push-keys` into the `.env` Collie reads (mode 600; on an install that Herdr manages this is Herdr's config folder, not `~/.config/collie`). They are the key pair that switches Collie's push on. The private key stays on this computer. An existing pair is never replaced (Collie itself refuses, because that would silence every phone that already subscribed). A Collie that was already installed is restarted once so it reads them. |
 | One line, only when the tailnet has no HTTPS certificates and you agreed | `COLLIE_SERVE_MODE=http` appended to `~/.config/collie/.env` (file mode 600). If the file already sets `COLLIE_SERVE_MODE`, the script stops and leaves it alone. |
 | A one-time pairing code, and later the paired devices | `~/.local/state/collie` (or `$COLLIE_STATE_DIR`); only hashes are kept |
 
@@ -359,6 +364,8 @@ rm ~/.local/bin/dumbpipe    # only if the script installed it
 ```
 
 For `--ssh`, delete the line that ends in `dogr-phone` from `~/.ssh/authorized_keys` (the phone can no longer connect), and nothing else was installed.
+
+If the script made push keys, delete the lines that start with `COLLIE_VAPID_` (and the comment `Web Push (VAPID)` above them) from the `.env` Collie reads, then run `collie restart`. Phones that had subscribed stop receiving notifications; running `collie push-keys` again makes a new pair and each phone has to switch notifications on again.
 
 If you chose `http://`, also delete the `COLLIE_SERVE_MODE=http` line (and the comment above it) from `~/.config/collie/.env`, then run `collie restart`.
 For `--tailcat`, `--iroh`, `--ssh`, `--proxy` or `--lan`, delete the lines the plan listed (they sit under a `# Added by dogr setup.sh` comment): `COLLIE_SKIP_SERVE`,
@@ -442,7 +449,7 @@ given, settings added, replaced or already there, a wide bind from an earlier ru
 (which addresses are offered, one or several, `--host` and its checks, Linux's `ip`, another port, no address, the risk being named before the question),
 the tailcat route (macOS with Homebrew and Linux with a downloaded release for three processors, a wrong or unlisted checksum, no Homebrew, a key that exists or fails to be made, a region or relay map, the service not starting or printing no address, an old log that must not be trusted, another port, settings already there or older, Collie not reading them; where the system has `plutil` it also checks that the launchd file is a valid property list),
 the iroh route (macOS and Linux for two processors, a processor with no release, a wrong checksum, a failed download, a dumbpipe that is installed, too old or lacks `--custom-alpn`, a relay address that is refused or passed on to the service (and the build of a dumbpipe that has `--relay`, with and without `cargo`), saved secrets that are used again or replaced when malformed, file modes, a ticket that cannot be read, a service that prints no ticket, an old log that must not be trusted, a ticket of another key, a relay that cannot be reached, a service that does not start, another port, settings already there or older, Collie not reading them, and the questions and options that lead to it; the secrets are checked to appear in no output and not in the runner),
-the SSH route (the line added, replaced or already there, other lines kept, a key that is refused, other ports, no host key, SSH not answering, the key never printed), the Tailscale route refusing leftovers, answering at the terminal, no terminal, wrong options, running through a pipe, a download that stops half way, and the progress line (drawn when asked, quiet without a terminal or with `DOGR_PROGRESS=never`, the size in megabytes, a server that gives no length, small files, a failing download, both orders of `-o` and the address). `shellcheck` runs too when it is installed.
+the SSH route (the line added, replaced or already there, other lines kept, a key that is refused, other ports, no host key, SSH not answering, the key never printed), the Tailscale route refusing leftovers, answering at the terminal, no terminal, wrong options, running through a pipe, a download that stops half way, and the progress line (drawn when asked, quiet without a terminal or with `DOGR_PROGRESS=never`, the size in megabytes, a server that gives no length, small files, a failing download, both orders of `-o` and the address). the push keys (made before the first start, an installed Collie restarted once, keys that are there already, Collie refusing, a failure that only warns, `--no-push`, a dry run). `shellcheck` runs too when it is installed.
 
 The site has its own tests (the language rules, the string table and its checks, the build, and the Worker with a stand-in for the static files): `node --test tests/site.test.mjs`.
 
@@ -458,6 +465,7 @@ The site has its own tests (the language rules, the string table and its checks,
 | That Collie bound to a local-network address only (the settings above) answers on that address, not on loopback, reports it as both its local and phone address, accepts `POST /api/pair` with an `Origin` (and refuses without), and pairs with the Dogr app | A real Collie bridge in an empty home folder, then the app in the iPhone simulator against `http://<this Mac's address>:<port>` |
 | That every API request except the health check and the pairing is refused with `device not paired` | A real bridge, eight routes tried without a token |
 | `--lan --host ... --dry-run` on a Mac with several addresses (it lists them, and stops when there is no terminal to ask on) | Run on the author's Mac, changing nothing |
+| That `collie push-keys` writes `COLLIE_VAPID_PUBLIC` and `COLLIE_VAPID_PRIVATE` (mode 600) into the `.env` and refuses the second time with "already configured" and exit 1, which is how the script reads it | Real `collie push-keys` (the installed `1.28.5-dogr.3`) with a scratch home folder, state folder and `HERDR_PLUGIN_CONFIG_DIR`, 2026-11-18 |
 | That `COLLIE_MUX` in the `.env` wins over the environment, and an empty `.env` follows the environment | Real `collie status --json` in an empty home folder |
 | `hc server start` is safe to repeat, and `herdr` has no way to start without a terminal | Real `hc` in an isolated session; `herdr --help` and its README |
 | That the launchd file the script writes is accepted by the real launchd, starts the real `tailcat serve` (Homebrew's 0.7.0) with a saved key, that the service's log carries the address in the form the script reads (154 characters, the same as `tailcat genkey` printed), that launchd starts the service again after it is killed with the same address, and that `bootout` stops it | Run on the author's Mac with a throw-away label, key and port; all removed afterwards |
