@@ -398,7 +398,7 @@ redirect to `/<code>/`. A page address such as `/de/` is never redirected, so a 
 the address that always means English). The language menu in the top corner does not list every language: it holds English, the
 language of the page, and, once it is opened, the browser's language and a language guessed from the visitor's country (`/_geo`,
 which is only a suggestion and never switches the page by itself). The other languages are still reachable by their address
-(`/de/`, `/ja/`, ...) and are known to search engines. The page loads nothing from other sites and stores nothing except the language a visitor picks.
+(`/de/`, `/ja/`, ...) and are known to search engines. When the menu opens, `webrtc-ip` 5.0.1 (vendored from commit `220deb1beb57c21e3219faf63d9232d50f17a940`, Apache-2.0; license in `site/vendor/`) asks STUN servers at Bilibili, Cloudflare and Google for a public IP address (in parallel, so a network that cannot reach one can still try the others). These are best-effort public servers, not a guarantee of availability in mainland China. The page sends it in a POST body to `/_geo`; the Worker asks `ipwho.is` for its country and returns only the corresponding language. A successful lookup takes precedence even if that country has no matching language; if WebRTC or the lookup fails, GET `/_geo` falls back to the Cloudflare country. These services see the IP address, so the footer and privacy page disclose them. The site stores nothing in the browser except the language a visitor picks.
 
 The script is read from GitHub on every request (through Cloudflare's cache), so a push to `main` needs no new deployment.
 Only a change to `site/`, `lang.js`, `worker.js` or `wrangler.jsonc` has to be deployed, by hand (the build runs first):

@@ -109,13 +109,55 @@ async function homePage(request, env) {
 }
 
 /**
- * Answers a request for /_geo with the language that people in the visitor's country usually read.
+ * Answers /_geo with a language suggested by the WebRTC IP's country (POST), or Cloudflare's request country (GET).
  * The country itself is never sent back, and the answer is never cached.
  * @param {Request & { cf?: { country?: string } }} request The incoming request; `cf.country` comes from Cloudflare.
- * @returns {Response} JSON `{"language": "<code>"}`, or `{"language": null}` when there is no guess.
+ * @returns {Promise<Response>} JSON containing a language or null, or an error when the lookup fails.
+ * TEST:tests/country.test.mjs
  */
-function geo(request) {
-  return new Response(JSON.stringify({ language: languageForCountry(request.cf?.country) }), {
+async function geo(request) {
+  if (request.method === "GET") return geoAnswer(languageForCountry(request.cf?.country));
+  if (request.method !== "POST") return failure(405, "Use GET or POST.");
+
+  try {
+    // Do not put the visitor's address in our URL, where it could be retained by access logs.
+    const body = await request.text();
+    if (body.length > 256) return failure(400, "Invalid address.");
+    const { ip } = JSON.parse(body);
+    if (!validAddress(ip)) return failure(400, "Invalid address.");
+    // The provider sees this address; request only the country and never cache its answer.
+    const response = await fetch(`https://ipwho.is/${ip}?fields=success,country_code`, {
+      headers: { accept: "application/json" }, signal: AbortSignal.timeout(3000),
+    });
+    if (!response.ok) return failure(502, "Country lookup failed.");
+    const result = await response.json();
+    if (result.success !== true || !/^[A-Z]{2}$/.test(result.country_code)) return failure(502, "Country lookup failed.");
+    return geoAnswer(languageForCountry(result.country_code));
+  } catch {
+    return failure(502, "Country lookup failed.");
+  }
+}
+
+/**
+ * Validates an IP literal before inserting it into the fixed provider URL.
+ * @param {unknown} ip Candidate address supplied by the browser.
+ * @returns {boolean} Whether this is a syntactically valid IPv4 or IPv6 address.
+ * TEST:tests/country.test.mjs
+ */
+function validAddress(ip) {
+  if (typeof ip !== "string" || ip.length > 45) return false;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) return ip.split(".").every((part) => Number(part) <= 255);
+  if (!/^[0-9a-f:]+$/i.test(ip) || !ip.includes(":")) return false;
+  try { return new URL(`http://[${ip}]/`).hostname.startsWith("["); } catch { return false; }
+}
+
+/**
+ * Sends only the suggested language, including null for a country without a suggestion.
+ * @param {string | null} language Suggested language.
+ * @returns {Response} A private, uncached JSON answer.
+ */
+function geoAnswer(language) {
+  return new Response(JSON.stringify({ language }), {
     headers: { "content-type": "application/json; charset=utf-8", "cache-control": "private, no-store" },
   });
 }

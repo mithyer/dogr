@@ -4,10 +4,11 @@
 //   2. the languages that are likely for this visitor, added to the language menu when it is opened: the browser's language
 //      and the one guessed from the country (the menu never lists the other languages),
 //   3. a cookie that remembers a language, written only when the visitor clicks one in the menu.
-// It loads nothing from other sites. The country guess is asked from this site's own Worker (/_geo), and only when the menu is opened.
+// Only when the menu opens, WebRTC asks a STUN server for the public address; our Worker asks a country service about it.
 // TEST:tests/site.test.mjs covers the rules in lang.js; this file is checked by hand in a browser.
 
 import { COOKIE_NAME, LANGUAGES, isCode, matchTag } from "/lang.js";
+import { countryLanguage } from "/country.mjs";
 
 // ---------- 1. Copy button ----------
 document.querySelectorAll("[data-copy]").forEach((button) => {
@@ -58,10 +59,7 @@ function setUpLanguageMenu(menu) {
     if (!menu.open || asked) return;
     asked = true;
     add(browserLanguage());
-    fetch("/_geo", { credentials: "omit", cache: "no-store" })
-      .then((answer) => (answer.ok ? answer.json() : null))
-      .then((data) => add(data && isCode(data.language) ? data.language : null))
-      .catch(() => { /* No guess from the country: the list stands as it is. */ });
+    countryLanguage().then((code) => add(isCode(code) ? code : null));
   });
 
   /**

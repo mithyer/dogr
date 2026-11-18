@@ -23,7 +23,7 @@ export const ORIGIN = "https://dogr.dev";
 const ROOT = dirname(fileURLToPath(import.meta.url));
 
 /** Files and folders of `site/` that are copied to the output unchanged. */
-const STATIC_ENTRIES = ["style.css", "page.js", "icon.svg", "img", "ios"];
+const STATIC_ENTRIES = ["style.css", "page.js", "country.mjs", "vendor", "icon.svg", "img", "ios"];
 /** The folder of `site/` that holds the rules files of the iPhone app's update reminder (served under /ios/). */
 export const UPDATE_RULES_DIR = "ios";
 /**
