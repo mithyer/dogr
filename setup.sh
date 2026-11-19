@@ -34,7 +34,7 @@
 #
 # Environment (all optional):
 #   DOGR_COLLIE_REPO          the GitHub repository Collie's Dogr build comes from (default mithyer/collie)
-#   DOGR_COLLIE_TAG           the Collie release to install (default v1.28.5-dogr.6, the one this script was tested with)
+#   DOGR_COLLIE_TAG           the Collie release to install (default v1.28.5-dogr.6, the one this script was tested with); the option --collie wins over it
 #   DOGR_COLLIE_INSTALL_URL   where Collie's installer comes from (default: scripts/install.sh of that repository at that tag)
 #   DOGR_HERDR_INSTALL_URL    where herdr's installer comes from (default https://herdr.dev/install.sh)
 #   DOGR_HERDR_CORE_INSTALL_URL   where herdr-core's installer comes from (default https://releases.herdr.dev/core/install.sh)
@@ -52,14 +52,18 @@ main() {
     set -u
 
     # ---- settings -------------------------------------------------------------------------------------------------
-    # Collie is installed from the Dogr build of Collie: a release of its own repository, named vX.Y.Z-dogr.N. One tag is
-    # pinned on purpose (never "the newest"): a new build is used by this script only after it has been tested with it.
+    # Collie is installed from the Dogr build of Collie: a release of its own repository, named vX.Y.Z-dogr.N. By default one tag
+    # is pinned on purpose (never "the newest"): a person who runs the script by hand gets the build it was tested with. The Dogr
+    # app asks for the build it recommends with --collie, which replaces the pinned tag (see below, after the options are read).
     COLLIE_REPO=${DOGR_COLLIE_REPO:-mithyer/collie}
     COLLIE_PIN=${DOGR_COLLIE_TAG:-v1.28.5-dogr.6}
-    INSTALL_URL=${DOGR_COLLIE_INSTALL_URL:-https://raw.githubusercontent.com/$COLLIE_REPO/$COLLIE_PIN/scripts/install.sh}
+    # the Collie build asked for with --collie (any of 1.28.5-dogr.6 or v1.28.5-dogr.6), empty when the option was not given
+    WANT_COLLIE=
+    # 1 once --collie was given, so that an empty value is an error and not the same as no option
+    WANT_COLLIE_GIVEN=0
+    # INSTALL_URL is made after the options are read, because the tag it names may come from --collie
+    INSTALL_URL=
     TTY=${DOGR_TTY:-/dev/tty}
-    # which app asked for this script (--from), for example iosv0.2; empty when the script was started by hand. Nothing branches on it yet.
-    FROM=
     TRIES=${DOGR_TRIES:-20}
     DELAY=${DOGR_POLL_DELAY:-1}
     # how the phone reaches this computer: tailscale, tailcat, iroh, ssh, proxy or lan; empty until an option or the questions say
@@ -306,7 +310,7 @@ WRAPPER
         cat <<'EOF'
 Usage: setup.sh [--tailscale | --tailcat [--derpmap-url URL] [--region NAME] | --iroh [--relay-url URL] | --ssh [--ssh-port N] [--ssh-key KEY]
                 | --proxy --url URL | --lan [--host ADDRESS]]
-                [--mux herdr|herdr-core] [--http] [--no-push] [--from CLIENT] [--yes] [--dry-run] [--help]
+                [--mux herdr|herdr-core] [--http] [--no-push] [--collie VERSION] [--yes] [--dry-run] [--help]
 
 Puts Collie on this computer, sets it up for the way your phone reaches it, and shows a QR code that pairs your phone.
 Without --tailscale, --tailcat, --iroh, --ssh, --proxy or --lan the script asks which way you use.
@@ -355,9 +359,11 @@ Without --tailscale, --tailcat, --iroh, --ssh, --proxy or --lan the script asks 
                 'collie push-keys': it adds two lines (COLLIE_VAPID_PUBLIC and COLLIE_VAPID_PRIVATE) to Collie's .env, private
                 to you. Without them Collie never sends a notification to the phone, whatever the app says. Nothing is sent
                 anywhere until you switch notifications on in the app. Keys that are already there are never replaced.
-  --from CLIENT Which app asked for this script, as the platform and the version joined by a v, for example iosv0.2. The Dogr
-                app puts it in the command it shows. It only says who is asking, so a later script can treat an older app
-                differently; nothing else changes. Leave it out when you run the script by hand.
+  --collie VERSION
+                Which Dogr build of Collie to install, for example 1.28.5-dogr.6 (a leading v is fine). The Dogr app puts the build
+                it recommends in the command it shows. It names the build to install on a computer without Collie, and the one an
+                older upstream Collie is switched to. A Collie that is already a Dogr build is left alone (the app's update button
+                moves those). Leave it out when you run the script by hand: you get the build this script was tested with.
   --yes, -y     Do not ask before changing anything.
   --dry-run     Show what would happen, change nothing, and stop.
   --help, -h    Show this text.
@@ -1569,15 +1575,27 @@ EOF
                 shift
                 ;;
             --mux=*) MUX=${1#--mux=} ;;
-            --from)
+            --collie)
                 if [ $# -lt 2 ]; then
                     usage >&2
-                    die 1 "--from needs a value: the app and its version, for example iosv0.2"
+                    die 1 "--collie needs a value: a Dogr build of Collie, for example 1.28.5-dogr.6"
                 fi
-                FROM=$2
+                WANT_COLLIE=$2
+                WANT_COLLIE_GIVEN=1
                 shift
                 ;;
-            --from=*) FROM=${1#--from=} ;;
+            --collie=*)
+                WANT_COLLIE=${1#--collie=}
+                WANT_COLLIE_GIVEN=1
+                ;;
+            # Older builds of the app wrote '--from iosv0.2' (which app asked). It was never used, and those commands must keep
+            # working, so the option and its value are read and dropped.
+            --from)
+                if [ $# -ge 2 ]; then
+                    shift
+                fi
+                ;;
+            --from=*) ;;
             --http) HTTP_OK=1 ;;
             --no-push) PUSH_KEYS=0 ;;
             --yes | -y) ASSUME_YES=1 ;;
@@ -1602,14 +1620,17 @@ EOF
             ;;
     esac
 
-    # The value is printed in the plan, so it must be plain. Its shape (platform, a v, the version) is not checked: a later app may
-    # say more than today's, and this script only prints it.
-    case $FROM in
-        *[!0-9A-Za-z._+-]*)
+    # The tag is put into the address of Collie's installer, which is then run, so only the exact shape of a Dogr build is taken:
+    # numbers, a dash, 'dogr', a dot and a number, with an optional leading v. The tag then names the build to install, in place of
+    # the pinned one (or of DOGR_COLLIE_TAG, which a person set on purpose; the option is the more specific of the two).
+    if [ "$WANT_COLLIE_GIVEN" = 1 ]; then
+        if ! printf '%s\n' "$WANT_COLLIE" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+-dogr\.[0-9]+$'; then
             usage >&2
-            die 1 "unknown --from value: $FROM (letters, digits, dots and dashes only, for example iosv0.2)"
-            ;;
-    esac
+            die 1 "unknown --collie value: $WANT_COLLIE (a Dogr build of Collie such as 1.28.5-dogr.6)"
+        fi
+        COLLIE_PIN=v${WANT_COLLIE#v}
+    fi
+    INSTALL_URL=${DOGR_COLLIE_INSTALL_URL:-https://raw.githubusercontent.com/$COLLIE_REPO/$COLLIE_PIN/scripts/install.sh}
 
     # Only macOS and Linux: Collie's Windows support is experimental and has its own guide.
     case $(uname -s 2>/dev/null) in
@@ -1693,10 +1714,6 @@ EOF
         fi
     else
         install_line="Install the Dogr build of Collie ($COLLIE_PIN from $COLLIE_REPO) into ${COLLIE_DIR:-~/.local/share/collie} with Collie's own installer (${INSTALL_URL})."
-    fi
-    # Who is asking, when the app said so: a person who copied the command can see which app it came from.
-    if [ -n "$FROM" ]; then
-        say "Started by the Dogr app ($FROM)."
     fi
     say "This will:"
     plan "$install_line"

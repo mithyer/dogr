@@ -748,24 +748,71 @@ expect_rc 0
 expect_called "download https://raw.githubusercontent.com/someone/collie/v1.28.5-dogr.6/scripts/install.sh"
 expect_called "installer ran tag=v1.28.5-dogr.6 repo=someone/collie"
 
-# The phone app says which app and version asked for the script (--from). It only adds one line to the plan; nothing else changes.
-run_case "from the app" -- --tailscale --from iosv0.2 --yes
+# The phone app names the Dogr build of Collie it recommends (--collie). It replaces the pinned tag, in the plan, in the address of
+# Collie's installer and in the tag the installer is given.
+run_case "collie build from the app" COLLIE_INSTALLED=0 -- --tailscale --collie 1.29.0-dogr.3 --yes
 expect_rc 0
-expect_out "Started by the Dogr app (iosv0.2)."
-run_case "from the app, written with an equals sign" -- --tailscale --from=iosv1.12.3-beta1 --yes
+expect_called "download https://raw.githubusercontent.com/mithyer/collie/v1.29.0-dogr.3/scripts/install.sh"
+expect_called "installer ran tag=v1.29.0-dogr.3 repo=mithyer/collie"
+expect_out "Install the Dogr build of Collie (v1.29.0-dogr.3 from mithyer/collie)"
+expect_not_called "v1.28.5-dogr.6"
+# A leading v is fine, and so is the equals sign.
+run_case "collie build with a v" COLLIE_INSTALLED=0 -- --tailscale --collie v1.29.0-dogr.3 --yes
 expect_rc 0
-expect_out "Started by the Dogr app (iosv1.12.3-beta1)."
-run_case "no from" -- --tailscale --yes
+expect_called "installer ran tag=v1.29.0-dogr.3 repo=mithyer/collie"
+run_case "collie build with an equals sign" COLLIE_INSTALLED=0 -- --tailscale --collie=1.29.0-dogr.3 --yes
 expect_rc 0
+expect_called "installer ran tag=v1.29.0-dogr.3 repo=mithyer/collie"
+# The option is the more specific of the two: it wins over DOGR_COLLIE_TAG, and the installer address still follows the tag.
+run_case "collie build beats the environment" COLLIE_INSTALLED=0 DOGR_COLLIE_TAG=v1.27.0 -- --tailscale --collie 1.29.0-dogr.3 --yes
+expect_rc 0
+expect_called "installer ran tag=v1.29.0-dogr.3 repo=mithyer/collie"
+# A replaced installer address stays as it is, whatever the tag.
+run_case "collie build and installer address" COLLIE_INSTALLED=0 DOGR_COLLIE_INSTALL_URL=https://example.test/i.sh -- --tailscale --collie 1.29.0-dogr.3 --yes
+expect_rc 0
+expect_called "download https://example.test/i.sh"
+expect_called "installer ran tag=v1.29.0-dogr.3 repo=mithyer/collie"
+# An upstream Collie is switched to the build the app asked for, and the plan says so.
+run_case "collie build switches upstream" STUB_COLLIE_VERSION=1.27.0 -- --tailscale --collie 1.29.0-dogr.3 --yes
+expect_rc 0
+expect_out "It is switched to the Dogr build of Collie (v1.29.0-dogr.3 from mithyer/collie)"
+expect_called "installer ran tag=v1.29.0-dogr.3 repo=mithyer/collie"
+# A Dogr build that is already installed is left alone, even when the app asks for a newer one (the app's update button moves it).
+run_case "collie build leaves a dogr build" STUB_COLLIE_VERSION=1.28.0-dogr.2 -- --tailscale --collie 1.29.0-dogr.3 --yes
+expect_rc 0
+expect_out "Collie is already installed (1.28.0-dogr.2, a Dogr build); it is left as it is."
+expect_not_called "installer ran"
+# The dry run shows the build and changes nothing.
+run_case "collie build dry run" COLLIE_INSTALLED=0 -- --tailscale --collie 1.29.0-dogr.3 --dry-run
+expect_rc 0
+expect_out "Install the Dogr build of Collie (v1.29.0-dogr.3 from mithyer/collie)"
+expect_not_called "download"
+# The value goes into the address of an installer that is run, so only the exact shape of a Dogr build is taken.
+for bad in '1.29.0' 'latest' '1.29.0-dogr' '1.29.0-dogr.3;id' '../x' '1.29.0-dogr.3/../../x' 'v1.29.0-dogr.3 --yes' ''; do
+    run_case "collie build that is not a dogr build: $bad" COLLIE_INSTALLED=0 -- --tailscale --collie "$bad" --yes
+    expect_rc 1
+    expect_out "unknown --collie value"
+    expect_not_called "download"
+    expect_not_called "installer ran"
+done
+run_case "collie without a value" -- --tailscale --collie
+expect_rc 1
+expect_out "--collie needs a value"
+# The option from older builds of the app (--from iosv0.2) is read and dropped, in both spellings and in any place.
+run_case "old from option" COLLIE_INSTALLED=0 -- --tailscale --from iosv0.2 --yes
+expect_rc 0
+expect_called "installer ran tag=v1.28.5-dogr.6 repo=mithyer/collie"
 expect_no_out "Started by the Dogr app"
-# The value is printed, so one that is not plain is refused before anything is done.
-run_case "from that is not plain" -- --tailscale --from 'iosv0.2;id' --yes
-expect_rc 1
-expect_out "unknown --from value"
-expect_not_called "collie start"
-run_case "from without a value" -- --tailscale --from
-expect_rc 1
-expect_out "--from needs a value"
+run_case "old from option with an equals sign" COLLIE_INSTALLED=0 -- --tailscale --from=iosv1.12.3-beta1 --yes
+expect_rc 0
+expect_no_out "unknown option"
+run_case "old from option, then a collie build" COLLIE_INSTALLED=0 -- --tailscale --mux herdr-core --collie 1.29.0-dogr.3 --from iosv0.2 --yes
+expect_rc 0
+expect_called "installer ran tag=v1.29.0-dogr.3 repo=mithyer/collie"
+# Without the option the pinned build is used.
+run_case "no collie option" COLLIE_INSTALLED=0 -- --tailscale --yes
+expect_rc 0
+expect_called "installer ran tag=v1.28.5-dogr.6 repo=mithyer/collie"
 
 # A Collie that is already a Dogr build is left as it is, even when the pin is another one.
 run_case "dogr build is left alone" STUB_COLLIE_VERSION=1.28.0-dogr.2 -- --tailscale --yes

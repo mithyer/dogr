@@ -218,8 +218,9 @@ Things to know:
 Dogr uses its own build of [Collie](https://github.com/AltanS/collie), published as releases of
 [`mithyer/collie`](https://github.com/mithyer/collie). The code is Collie's; a Dogr release is a Collie release plus a suffix
 (`v1.28.5-dogr.6` is Collie 1.28.5, sixth Dogr build of it) and its own update address, so `collie update` looks for the next Dogr
-build there and never offers an upstream release by mistake. The script pins one tag (`DOGR_COLLIE_TAG`), because a new build is
-used by it only after it has been tested with it.
+build there and never offers an upstream release by mistake. By default the script pins one tag (`DOGR_COLLIE_TAG`), because a person
+who runs it by hand should get a build it was tested with. The Dogr app does not rely on that: the command it shows ends with
+`--collie <the build the app recommends>`, which replaces the pinned tag, so a new recommended build needs a new app and no new script.
 
 What the script does with a Collie that is already there:
 
@@ -265,7 +266,8 @@ curl -fsSL https://dogr.dev/setup.sh | sh -s -- --tailscale --yes
 | `--lan` | The phone reaches it over the local network, plain http. |
 | `--host 192.168.1.20` | This computer's address on the local network. Implies `--lan`. Without it the script looks for one (private ranges only, not Tailscale, Docker or virtual machines) and asks when there are several; with no terminal to ask on it stops and lists them. |
 | `--mux herdr` or `--mux herdr-core` | The terminal program Collie drives. Without it the script asks (and stops when there is no terminal to ask on). A program that is missing is installed after you agree to the plan. |
-| `--from iosv0.2` | Which app asked for this script: the platform and the version joined by a `v`. The Dogr app puts it at the end of the command it shows. The script prints one line ("Started by the Dogr app (iosv0.2).") and does nothing else with it yet; it exists so a later script can treat an older app differently. Only letters, digits, dots, dashes, `_` and `+` are accepted. Leave it out when you run the script by hand. |
+| `--collie 1.28.5-dogr.6` | Which Dogr build of Collie to install (a leading `v` is fine). The Dogr app puts the build it recommends at the end of the command it shows. It replaces the pinned tag (and `DOGR_COLLIE_TAG`) in the plan, in the address of Collie's installer and in the tag the installer is given. It names the build for a computer without Collie and the one an older upstream Collie is switched to; a Collie that is already a Dogr build is left alone (the app's update button moves those). Only the exact shape of a Dogr build is accepted (`X.Y.Z-dogr.N`), because the value goes into the address of an installer that is run. Leave it out when you run the script by hand. |
+| `--from iosv0.2` | Read and dropped. Older builds of the app wrote it to say which app asked; it was never used, and their commands keep working. |
 | `--yes`, `-y` | Do not ask before changing anything. Needed when there is no terminal. Does not agree to `http://` addresses; use `--http` for that. |
 | `--http` | If your tailnet has no HTTPS certificates, switch Collie to `http://` addresses (`COLLIE_SERVE_MODE=http`) without asking. |
 | `--no-push` | Do not make Collie's push keys (`collie push-keys`). Without keys Collie's push stays off and the phone gets no notifications; you can make them later by hand (see below). |
@@ -275,7 +277,7 @@ curl -fsSL https://dogr.dev/setup.sh | sh -s -- --tailscale --yes
 | Environment variable | Meaning |
 | --- | --- |
 | `DOGR_COLLIE_REPO` | The GitHub repository the Dogr build of Collie comes from. Default `mithyer/collie`. |
-| `DOGR_COLLIE_TAG` | The Collie release to install. Default `v1.28.5-dogr.6`, the one this script was tested with (never "the newest"). |
+| `DOGR_COLLIE_TAG` | The Collie release to install. Default `v1.28.5-dogr.6`, the one this script was tested with (never "the newest"). The option `--collie` wins over it. |
 | `DOGR_COLLIE_INSTALL_URL` | Where Collie's installer comes from. Default: `scripts/install.sh` of that repository at that tag (`https://raw.githubusercontent.com/<repo>/<tag>/scripts/install.sh`). |
 | `DOGR_HERDR_INSTALL_URL`, `DOGR_HERDR_CORE_INSTALL_URL` | Where the installers of herdr and herdr-core come from. Defaults `https://herdr.dev/install.sh` and `https://releases.herdr.dev/core/install.sh`. |
 | `DOGR_TAILCAT_VERSION`, `DOGR_TAILCAT_RELEASE_URL` | Linux: which tailcat release to download (default `0.7.0`) and where its files are (default `https://github.com/tailscale/tailcat/releases/download/v<version>`). On macOS Homebrew decides the version. |
@@ -291,7 +293,7 @@ curl -fsSL https://dogr.dev/setup.sh | sh -s -- --tailscale --yes
 | Code | Meaning | What to do |
 | --- | --- | --- |
 | 0 | Done (or a dry run, or `--help`). | Scan the code. |
-| 1 | Wrong use (two routes at once, a bad `--url`, `--host`, `--derpmap-url`, `--ssh-port`, `--ssh-key` or `--from`), unsupported computer, or no terminal to ask on. | Read the message; add `--yes` (and the route and `--mux`) when there is no terminal. |
+| 1 | Wrong use (two routes at once, a bad `--url`, `--host`, `--derpmap-url`, `--ssh-port`, `--ssh-key` or `--collie`), unsupported computer, or no terminal to ask on. | Read the message; add `--yes` (and the route and `--mux`) when there is no terminal. |
 | 2 | Not used. It once meant "route not scripted"; the number stays free so the others keep their meaning. | |
 | 3 | Something needs you first: herdr is installed but not running, Collie reports a missing piece (for example Tailscale not signed in, or HTTPS not enabled and `http://` not agreed to), no local-network address was found, a proxy address that does not answer yet, settings of another route left in the `.env`, a setting of yours could not be used, or Collie drives another terminal program or gives another address than the one asked for. | Do what the message says, then run the command again. For the proxy: set it up, then `collie pair`. |
 | 4 | Collie did not start or does not answer, herdr-core could not be started, or (tailcat, iroh) the key could not be made, the service could not be started, it printed no address, or (iroh) the running service has another endpoint id than the saved key. | `collie logs`; for tailcat and iroh the message names the command, and `~/.local/state/dogr/tailcat.log` or `iroh.log` has the service's own words. |
