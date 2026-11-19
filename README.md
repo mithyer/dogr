@@ -17,8 +17,9 @@ once. Then it:
 
 1. installs Collie with Collie's own installer, only if Collie is not installed yet. It installs the **Dogr build of Collie**
    (a release of [`mithyer/collie`](https://github.com/mithyer/collie), named like `v1.28.5-dogr.3`; see
-   [Which Collie](#which-collie)). A Collie that is already a Dogr build is left as it is; an upstream Collie is switched to
-   the Dogr build in place, and the way back is printed (see [Which Collie](#which-collie));
+   [Which Collie](#which-collie)). A Collie that is already a Dogr build is left as it is, unless the command asks for a newer Dogr build with
+   `--collie`: then it is updated to that build. An upstream Collie is switched to the Dogr build in place. Both print the way back
+   (see [Which Collie](#which-collie));
 2. makes sure the terminal program Collie drives is there and running: **herdr** (the terminal app) or **herdr-core** (a
    background service). One that is missing is installed with its own installer; herdr-core is started with `hc server
    start`; herdr has to be opened by you, and the script says how when it is not;
@@ -226,8 +227,9 @@ What the script does with a Collie that is already there:
 
 | Collie on this computer | What happens |
 | --- | --- |
-| none | The pinned Dogr build is installed. |
-| a Dogr build (`...-dogr.N`) | Left as it is. |
+| none | The pinned Dogr build is installed (or the one `--collie` asks for). |
+| a Dogr build (`...-dogr.N`), no `--collie` | Left as it is. |
+| a Dogr build older than the one `--collie` asks for | **Updated in place**, the same way as the switch below (the plan says "updated"); the way back names the Dogr repository and the old tag. The same or a newer build is left as it is: the script never goes back. |
 | an upstream release not newer than the pin | **Switched in place**: Collie's installer lays the pinned version beside the old one and points `current` at it; Collie is restarted at the end; the line that goes back is printed. |
 | an upstream release newer than the pin | Left as it is (switching would be a downgrade). |
 | a version it cannot read | Left as it is. |
@@ -266,7 +268,7 @@ curl -fsSL https://dogr.dev/setup.sh | sh -s -- --tailscale --yes
 | `--lan` | The phone reaches it over the local network, plain http. |
 | `--host 192.168.1.20` | This computer's address on the local network. Implies `--lan`. Without it the script looks for one (private ranges only, not Tailscale, Docker or virtual machines) and asks when there are several; with no terminal to ask on it stops and lists them. |
 | `--mux herdr` or `--mux herdr-core` | The terminal program Collie drives. Without it the script asks (and stops when there is no terminal to ask on). A program that is missing is installed after you agree to the plan. |
-| `--collie 1.28.5-dogr.6` | Which Dogr build of Collie to install (a leading `v` is fine). The Dogr app puts the build it recommends at the end of the command it shows. It replaces the pinned tag (and `DOGR_COLLIE_TAG`) in the plan, in the address of Collie's installer and in the tag the installer is given. It names the build for a computer without Collie and the one an older upstream Collie is switched to; a Collie that is already a Dogr build is left alone (the app's update button moves those). Only the exact shape of a Dogr build is accepted (`X.Y.Z-dogr.N`), because the value goes into the address of an installer that is run. Leave it out when you run the script by hand. |
+| `--collie 1.28.5-dogr.6` | Which Dogr build of Collie to install (a leading `v` is fine). The Dogr app puts the build it recommends at the end of the command it shows. It replaces the pinned tag (and `DOGR_COLLIE_TAG`) in the plan, in the address of Collie's installer and in the tag the installer is given. It names the build for a computer without Collie and the one an older upstream Collie or an older Dogr build is switched to (the old version stays beside it, and the way back is printed); a Dogr build that is the same or newer is left alone, so this never goes back. Without the option a Dogr build is never touched. Only the exact shape of a Dogr build is accepted (`X.Y.Z-dogr.N`), because the value goes into the address of an installer that is run. Leave it out when you run the script by hand. |
 | `--from iosv0.2` | Read and dropped. Older builds of the app wrote it to say which app asked; it was never used, and their commands keep working. |
 | `--yes`, `-y` | Do not ask before changing anything. Needed when there is no terminal. Does not agree to `http://` addresses; use `--http` for that. |
 | `--http` | If your tailnet has no HTTPS certificates, switch Collie to `http://` addresses (`COLLIE_SERVE_MODE=http`) without asking. |
@@ -442,7 +444,7 @@ sh tests/run.sh
 ```
 
 The tests run `setup.sh` against a stub `curl`, `collie`, `hc`, `herdr`, `ifconfig`, `ip`, `uname`, `brew`, `tailcat`, `dumbpipe`, `launchctl`, `systemctl`, `nc` and `ssh-keygen`, each case in its own empty home folder. They cover the
-normal path, running twice, `--dry-run`, installing first, switching an upstream Collie to the Dogr build (done, dry run, a newer Collie, an unreadable version, a failed download or installer, an installer that changes nothing), a failed download or installer, Collie naming a missing setup step,
+normal path, running twice, `--dry-run`, installing first, switching an upstream Collie to the Dogr build (done, dry run, a newer Collie, an unreadable version, a failed download or installer, an installer that changes nothing), updating an older Dogr build to the one `--collie` asks for (done, numbers compared as numbers, the same or a newer build, no option, an unreadable version, a failed installer, an installer that changes nothing, dry run), a failed download or installer, Collie naming a missing setup step,
 no Tailscale address, Collie not answering, the Tailscale address not answering from this computer, a failed start, a QR
 code that could not be drawn, a tailnet without HTTPS certificates (agreed, declined, `--http`, an existing `.env`, a setting
 Collie does not pick up), the terminal program (named, asked for, installed, not running, a failing installer or start, an

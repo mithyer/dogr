@@ -129,8 +129,11 @@ main() {
     ENV_NOTED=0
     # 1 when Collie was installed before this run, so it may already run with the old settings
     WAS_INSTALLED=0
-    # 1 when the installed Collie is an upstream release that this run switches to the Dogr build (decided when the plan is made)
+    # 1 when the installed Collie is one that this run switches to the build named by the plan: an upstream release, or (SWITCH_DOGR) an
+    # older Dogr build (decided when the plan is made)
     SWITCH=0
+    # 1 when what is switched is a Dogr build that is older than the one asked for with --collie (a Dogr-to-Dogr update, not upstream to Dogr)
+    SWITCH_DOGR=0
     # 1 once that switch has worked: the running Collie is still the old program until it is restarted
     COLLIE_SWITCHED=0
     # the version an upstream Collie had before the switch, for the line that says how to go back
@@ -306,6 +309,20 @@ WRAPPER
         }'
     }
 
+    # dogr_older A B: true when Dogr build A is older than Dogr build B ("1.28.0-dogr.2" is older than "1.28.5-dogr.1" and than
+    # "1.28.0-dogr.3"): the x.y.z decides, and when it is the same, the number after "-dogr." does. A version that is not a Dogr build
+    # (no "-dogr." and a number after it) is never older, so nothing is changed on a guess.
+    dogr_older() {
+        awk -v a="$1" -v b="$2" 'BEGIN {
+            if (split(a, p, "-dogr.") != 2 || split(b, q, "-dogr.") != 2) exit 1
+            if (p[2] !~ /^[0-9]+$/ || q[2] !~ /^[0-9]+$/) exit 1
+            split(p[1], x, "."); split(q[1], y, ".")
+            for (i = 1; i <= 3; i++) { if (x[i] + 0 < y[i] + 0) exit 0; if (x[i] + 0 > y[i] + 0) exit 1 }
+            if (p[2] + 0 < q[2] + 0) exit 0
+            exit 1
+        }'
+    }
+
     usage() {
         cat <<'EOF'
 Usage: setup.sh [--tailscale | --tailcat [--derpmap-url URL] [--region NAME] | --iroh [--relay-url URL] | --ssh [--ssh-port N] [--ssh-key KEY]
@@ -362,8 +379,9 @@ Without --tailscale, --tailcat, --iroh, --ssh, --proxy or --lan the script asks 
   --collie VERSION
                 Which Dogr build of Collie to install, for example 1.28.5-dogr.6 (a leading v is fine). The Dogr app puts the build
                 it recommends in the command it shows. It names the build to install on a computer without Collie, and the one an
-                older upstream Collie is switched to. A Collie that is already a Dogr build is left alone (the app's update button
-                moves those). Leave it out when you run the script by hand: you get the build this script was tested with.
+                older upstream Collie or an older Dogr build is switched to (the old version stays beside it, and the way back is
+                printed). A Dogr build that is the same or newer is left alone: this never goes back. Leave it out when you run the
+                script by hand: you get the build this script was tested with, and a Collie that is already a Dogr build stays.
   --yes, -y     Do not ask before changing anything.
   --dry-run     Show what would happen, change nothing, and stop.
   --help, -h    Show this text.
@@ -1699,7 +1717,15 @@ EOF
         else
             case $OLD_VERSION in
                 *-dogr.*)
-                    install_line="Collie is already installed ($OLD_VERSION, a Dogr build); it is left as it is."
+                    if [ "$WANT_COLLIE_GIVEN" = 1 ] && dogr_older "$OLD_VERSION" "$pin_version"; then
+                        # The app asked (--collie) for a newer Dogr build than the one here. Only then, and never the other way round: a
+                        # person who runs the script by hand, or an app that asks for an older build, leaves the Collie as it is.
+                        SWITCH=1
+                        SWITCH_DOGR=1
+                        install_line="Collie $OLD_VERSION (a Dogr build) is installed. It is updated to the Dogr build $COLLIE_PIN (from $COLLIE_REPO) that you asked for; the old version stays beside it, and the way back is printed."
+                    else
+                        install_line="Collie is already installed ($OLD_VERSION, a Dogr build); it is left as it is."
+                    fi
                     ;;
                 *)
                     if base_newer "$OLD_VERSION" "$pin_version"; then
@@ -1835,23 +1861,35 @@ EOF
         find_collie || die 5 "Collie was installed but the 'collie' command was not found. Add ~/.local/bin to your PATH and run this again."
     elif [ "$SWITCH" = 1 ]; then
         say ""
-        say "==> Switching Collie to the Dogr build"
+        if [ "$SWITCH_DOGR" = 1 ]; then
+            say "==> Updating Collie to $COLLIE_PIN"
+        else
+            say "==> Switching Collie to the Dogr build"
+        fi
         script=$WORK/collie-install.sh
         # A pinned tag makes Collie's installer lay the new version down beside the old one and point "current" at it, so a failure
         # here leaves the old Collie as it was. It is never fatal: the app also works with the Collie that is already here.
         if fetch "$INSTALL_URL" "$script" && run_installer "$script" "$COLLIE_PIN" "$COLLIE_REPO"; then
             now=$(version_of "$(collie version 2>/dev/null </dev/null | head -n 1)")
-            case $now in
-                *-dogr.*)
-                    COLLIE_SWITCHED=1
-                    say "  Collie is now $now"
-                    say "  To go back to what you had, run:"
-                    say "    curl -fsSL https://raw.githubusercontent.com/AltanS/collie/v$OLD_VERSION/scripts/install.sh | COLLIE_UPDATE_REPO=AltanS/collie COLLIE_TAG=v$OLD_VERSION sh"
-                    ;;
-                *)
-                    warn "Collie still says ${now:-no version} after the switch, so it stays as it was."
-                    ;;
-            esac
+            # It worked when Collie now says a Dogr build; for an update, when that build is newer than the one that was here.
+            switch_ok=0
+            if [ "$SWITCH_DOGR" = 1 ]; then
+                if dogr_older "$OLD_VERSION" "$now"; then switch_ok=1; fi
+            else
+                case $now in
+                    *-dogr.*) switch_ok=1 ;;
+                esac
+            fi
+            if [ "$switch_ok" = 1 ]; then
+                COLLIE_SWITCHED=1
+                say "  Collie is now $now"
+                say "  To go back to what you had, run:"
+                # The old version comes from where it came from: a Dogr build from the Dogr repository, upstream's from upstream's.
+                if [ "$SWITCH_DOGR" = 1 ]; then back_repo=$COLLIE_REPO; else back_repo=AltanS/collie; fi
+                say "    curl -fsSL https://raw.githubusercontent.com/$back_repo/v$OLD_VERSION/scripts/install.sh | COLLIE_UPDATE_REPO=$back_repo COLLIE_TAG=v$OLD_VERSION sh"
+            else
+                warn "Collie still says ${now:-no version} after the switch, so it stays as it was."
+            fi
         else
             warn "could not switch Collie to the Dogr build (the output above says why). Collie $OLD_VERSION stays as it was; the rest of the setup goes on with it."
         fi

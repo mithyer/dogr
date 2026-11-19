@@ -777,10 +777,65 @@ run_case "collie build switches upstream" STUB_COLLIE_VERSION=1.27.0 -- --tailsc
 expect_rc 0
 expect_out "It is switched to the Dogr build of Collie (v1.29.0-dogr.3 from mithyer/collie)"
 expect_called "installer ran tag=v1.29.0-dogr.3 repo=mithyer/collie"
-# A Dogr build that is already installed is left alone, even when the app asks for a newer one (the app's update button moves it).
-run_case "collie build leaves a dogr build" STUB_COLLIE_VERSION=1.28.0-dogr.2 -- --tailscale --collie 1.29.0-dogr.3 --yes
+# A Dogr build that is older than the one the app asks for is updated to it: Collie is restarted, and the way back names the
+# Dogr repository and the old tag (the old version stays beside the new one).
+run_case "collie build updates an older dogr build" STUB_COLLIE_VERSION=1.28.0-dogr.2 -- --tailscale --collie 1.29.0-dogr.3 --yes
 expect_rc 0
-expect_out "Collie is already installed (1.28.0-dogr.2, a Dogr build); it is left as it is."
+expect_out "Collie 1.28.0-dogr.2 (a Dogr build) is installed. It is updated to the Dogr build v1.29.0-dogr.3 (from mithyer/collie) that you asked for"
+expect_out "==> Updating Collie to v1.29.0-dogr.3"
+expect_called "download https://raw.githubusercontent.com/mithyer/collie/v1.29.0-dogr.3/scripts/install.sh"
+expect_called "installer ran tag=v1.29.0-dogr.3 repo=mithyer/collie"
+expect_out "Collie is now 1.29.0-dogr.3"
+expect_out "curl -fsSL https://raw.githubusercontent.com/mithyer/collie/v1.28.0-dogr.2/scripts/install.sh | COLLIE_UPDATE_REPO=mithyer/collie COLLIE_TAG=v1.28.0-dogr.2 sh"
+expect_out "==> Restarting Collie so the Dogr build runs"
+expect_order "installer ran" "collie restart"
+# The same x.y.z and a higher number is an update too, and numbers are compared as numbers (9 is older than 10, not newer).
+run_case "collie build updates the dogr number" STUB_COLLIE_VERSION=1.29.0-dogr.9 -- --tailscale --collie 1.29.0-dogr.10 --yes
+expect_rc 0
+expect_out "It is updated to the Dogr build v1.29.0-dogr.10"
+expect_called "installer ran tag=v1.29.0-dogr.10 repo=mithyer/collie"
+# Never back: the same build, a higher number, or a higher x.y.z that is already installed is left alone.
+run_case "collie build same build" STUB_COLLIE_VERSION=1.29.0-dogr.3 -- --tailscale --collie 1.29.0-dogr.3 --yes
+expect_rc 0
+expect_out "Collie is already installed (1.29.0-dogr.3, a Dogr build); it is left as it is."
+expect_not_called "installer ran"
+expect_not_called "collie restart"
+run_case "collie build installed number is higher" STUB_COLLIE_VERSION=1.29.0-dogr.10 -- --tailscale --collie 1.29.0-dogr.9 --yes
+expect_rc 0
+expect_out "it is left as it is."
+expect_not_called "installer ran"
+run_case "collie build installed x.y.z is higher" STUB_COLLIE_VERSION=1.30.0-dogr.1 -- --tailscale --collie 1.29.0-dogr.3 --yes
+expect_rc 0
+expect_out "it is left as it is."
+expect_not_called "installer ran"
+expect_not_called "collie restart"
+# Without the option nothing is updated: a person who runs the script by hand keeps the Collie they have.
+run_case "no collie option leaves an older dogr build" STUB_COLLIE_VERSION=1.20.0-dogr.1 -- --tailscale --yes
+expect_rc 0
+expect_out "Collie is already installed (1.20.0-dogr.1, a Dogr build); it is left as it is."
+expect_not_called "installer ran"
+# A computer whose Collie says nothing that reads as a version is left alone.
+run_case "collie build with an unreadable installed version" STUB_COLLIE_VERSION=unknown -- --tailscale --collie 1.29.0-dogr.3 --yes
+expect_rc 0
+expect_out "it is left as it is."
+expect_not_called "installer ran"
+# An update that fails is a warning, not the end: the old Collie stays and the rest of the setup goes on with it.
+run_case "collie build update: installer fails" STUB_COLLIE_VERSION=1.28.0-dogr.2 STUB_INSTALLER_FAIL=1 -- --tailscale --collie 1.29.0-dogr.3 --yes
+expect_rc 0
+expect_out "could not switch Collie to the Dogr build"
+expect_out "Collie 1.28.0-dogr.2 stays as it was"
+expect_called "collie start"
+expect_not_called "collie restart"
+run_case "collie build update: nothing changed" STUB_COLLIE_VERSION=1.28.0-dogr.2 STUB_INSTALLER_KEEP_VERSION=1 -- --tailscale --collie 1.29.0-dogr.3 --yes
+expect_rc 0
+expect_out "Collie still says 1.28.0-dogr.2 after the switch, so it stays as it was."
+expect_not_called "collie restart"
+# The dry run names the update and changes nothing.
+run_case "collie build update dry run" STUB_COLLIE_VERSION=1.28.0-dogr.2 -- --tailscale --collie 1.29.0-dogr.3 --dry-run
+expect_rc 0
+expect_out "It is updated to the Dogr build v1.29.0-dogr.3"
+expect_out "Dry run: nothing was changed."
+expect_not_called "download"
 expect_not_called "installer ran"
 # The dry run shows the build and changes nothing.
 run_case "collie build dry run" COLLIE_INSTALLED=0 -- --tailscale --collie 1.29.0-dogr.3 --dry-run
