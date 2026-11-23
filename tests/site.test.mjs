@@ -41,6 +41,24 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const TEMPLATE = readFileSync(join(ROOT, "site", "page.html"), "utf8");
 const STRINGS_FILE = join(ROOT, "site", "i18n", "strings.csv");
 
+// The five pictures are the current App Store scenes, with descriptions for their actual contents.
+// TEST:site.test.mjs[App Store screenshots]
+describe("App Store screenshots", () => {
+  test("the page references the current scenes and each asset is present", () => {
+    for (const [name, alt] of [
+      ["iphone-machines-v03.jpg", "hero.alt"],
+      ["iphone-workspaces-v03.jpg", "r1.alt"],
+      ["iphone-preview-v03.jpg", "r2.alt"],
+      ["iphone-conversation-v03.jpg", "r3.alt"],
+      ["ipad-panels-v03.jpg", "r5.alt"],
+    ]) {
+      assert.ok(TEMPLATE.includes(`src="/img/${name}"`), name);
+      assert.ok(TEMPLATE.includes(`alt="{{@${alt}}}"`), alt);
+      assert.ok(readFileSync(join(ROOT, "site", "img", name)).length > 0, name);
+    }
+  });
+});
+
 describe("language table", () => {
   test("the twelve languages of the app, each code once", () => {
     assert.equal(LANGUAGES.length, 12);
