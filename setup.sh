@@ -34,7 +34,7 @@
 #
 # Environment (all optional):
 #   DOGR_COLLIE_REPO          the GitHub repository Collie's Dogr build comes from (default mithyer/collie)
-#   DOGR_COLLIE_TAG           the Collie release to install (default v1.30.0-dogr.22, the one this script was tested with); the option --collie wins over it
+#   DOGR_COLLIE_TAG           the Collie release to install (default v1.30.0-dogr.23, the one this script was tested with); the option --collie wins over it
 #   DOGR_COLLIE_INSTALL_URL   where Collie's installer comes from (default: scripts/install.sh of that repository at that tag)
 #   DOGR_HERDR_INSTALL_URL    where herdr's installer comes from (default https://herdr.dev/install.sh)
 #   DOGR_HERDR_CORE_INSTALL_URL   where herdr-core's installer comes from (default https://releases.herdr.dev/core/install.sh)
@@ -56,7 +56,7 @@ main() {
     # is pinned on purpose (never "the newest"): a person who runs the script by hand gets the build it was tested with. The Dogr
     # app asks for the build it recommends with --collie, which replaces the pinned tag (see below, after the options are read).
     COLLIE_REPO=${DOGR_COLLIE_REPO:-mithyer/collie}
-    COLLIE_PIN=${DOGR_COLLIE_TAG:-v1.30.0-dogr.22}
+    COLLIE_PIN=${DOGR_COLLIE_TAG:-v1.30.0-dogr.23}
     # the Collie build asked for with --collie (any of 1.28.5-dogr.6 or v1.28.5-dogr.6), empty when the option was not given
     WANT_COLLIE=
     # 1 once --collie was given, so that an empty value is an error and not the same as no option
