@@ -554,10 +554,15 @@ describe("the real site", () => {
   test("the pill of every home page shows the newest version and leads to the What's new page of its language", () => {
     const latest = latestWhatsNew(join(ROOT, "site"));
     assert.match(latest, /^\d+\.\d+/);
+    const { strings } = loadStrings(STRINGS_FILE);
     for (const { code } of LANGUAGES) {
       const page = readFileSync(join(out, code, "index.html"), "utf8");
       assert.ok(page.includes(`href="/${code}/ios/whatsnew/" title="`), `${code}: the pill leads to its own language's What's new page`);
-      assert.match(page, new RegExp(`<a class="pill"[^>]*>v${latest.replaceAll(".", "\\.")}</a>`), `${code}: the pill shows the newest version`);
+      assert.match(page, new RegExp(`<a class="pill"[^>]*><span class="ver">v${latest.replaceAll(".", "\\.")}</span>`), `${code}: the pill shows the newest version`);
+      // The visible word that tells people a tap opens the release notes, in the language of the page.
+      const label = strings[code]["pill.label"];
+      assert.ok(label && label.length <= 20, `${code}: a short word for the pill`);
+      assert.ok(page.includes(`<span class="hint">${label.replaceAll("'", "&#39;")}</span></a>`) || page.includes(`<span class="hint">${label}</span></a>`), `${code}: the pill says what it opens`);
     }
   });
 
@@ -578,7 +583,7 @@ describe("the real site", () => {
       // The way back and the data the script draws the list from.
       assert.ok(page.includes(`<a href="/${code}/">`), `${code}: the way back to the home page of this language`);
       assert.ok(page.includes('data-src="/ios/whatsnew-1.json"') && page.includes(`data-lang="${code}"`), `${code}: the data file and the language`);
-      assert.ok(/data-loading="[^"]+" data-error="[^"]+" data-latest="[^"]+"/.test(page), `${code}: the texts of the states the script draws`);
+      assert.ok(/data-loading="[^"]+" data-error="[^"]+" data-latest="[^"]+" data-older="[^"]+"/.test(page), `${code}: the texts the script draws (states and the button for earlier versions)`);
       assert.ok(page.includes('<script type="module" src="/whatsnew.js">'), `${code}: the script`);
     }
     for (const file of ["whatsnew.js", "whatsnew.mjs"]) assert.ok(readdirSync(out).includes(file), file);

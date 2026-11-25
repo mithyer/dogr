@@ -64,8 +64,11 @@ h2 { font-size: clamp(28px, 4vw, 40px); margin-bottom: 14px; }
 .top nav a:hover { color: var(--ink); }
 .pill { font-size: 12px; font-weight: 700; padding: 3px 10px; border: 2px solid var(--ink); border-radius: 999px; background: var(--cream); color: #23413b; white-space: nowrap; }
 /* The pill in the top bar is a link to the What's new page (it shows the newest version). */
-a.pill { text-decoration: none; }
+a.pill { text-decoration: none; display: inline-flex; align-items: center; gap: 8px; }
 a.pill:hover, a.pill:focus-visible { background: var(--mint); }
+/* The word after the number says what the pill opens ("What's new"); a thin line separates it, and an arrow says it is a link. */
+a.pill .hint { font-weight: 600; padding-left: 8px; border-left: 2px solid rgba(35, 65, 59, 0.35); }
+a.pill .hint::after { content: "\203A"; content: "\203A" / ""; margin-left: 5px; font-weight: 700; }
 /* The top bar of a page without a menu of sections (What's new): the name at the left, the language menu at the right. */
 .top.simple .lang { margin-left: auto; }
 
@@ -243,6 +246,18 @@ footer p { margin: 0 0 8px; max-width: 760px; }
   .lang .menu { min-width: 180px; }
 }
 
+/* The top bar of the home page on a small phone carries the name, the pill ("v0.4  What's new") and the language button. They only fit
+   side by side (down to 360 px wide, in every language) when the button shows just its globe (its aria-label still names it; the
+   What's new page has no pill and keeps the name) and the pill is a little tighter. */
+@media (max-width: 480px) {
+  .top:not(.simple) { gap: 8px; }
+  .top:not(.simple) .lang summary span { display: none; }
+  .top:not(.simple) .lang summary { padding: 5px 10px; }
+  a.pill { gap: 6px; padding: 3px 8px; }
+  a.pill .hint { padding-left: 6px; }
+  a.pill .hint::after { margin-left: 3px; }
+}
+
 /* On a phone each table row becomes a small card: the feature on top, then the two answers, each with its label.
    The labels come from the data-label attribute of each cell (so every language writes its own), and the table stays a
    real table for screen readers and wide screens. */
@@ -269,6 +284,8 @@ footer p { margin: 0 0 8px; max-width: 760px; }
 .whatsnew .release h2 { margin: 0 0 12px; font-size: 26px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .whatsnew .release h2 a { text-decoration: none; }
 .whatsnew .release h2 a:hover { text-decoration: underline; text-decoration-color: var(--orange); }
+/* The button under the newest version that shows the earlier ones (whatsnew.js removes it once they are shown). */
+.whatsnew .more { margin: 4px 0 0; cursor: pointer; }
 /* The mark on the newest version has the look of the pills of the top bar. */
 .release .latest { font-size: 12px; font-weight: 700; letter-spacing: 0; padding: 3px 10px; border: 2px solid var(--ink); border-radius: 999px; background: var(--cream); color: #23413b; }
 .whatsnew .release .notes p { margin: 0 0 12px; white-space: pre-line; }

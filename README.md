@@ -445,13 +445,17 @@ in the Cloudflare dashboard (Workers & Pages); nothing else depends on it.
 `https://dogr.dev/ios/whatsnew` shows what each version of the app changed, newest first, in the visitor's language (chosen like the
 home page: `/ios/whatsnew` redirects to `/<code>/ios/whatsnew/`, English is served at the address itself). The notes are the
 App Store's own "What's New" texts, one per language. A language a version has no text in shows the English text, marked with the
-language. The page itself is static; the browser draws the list from `/ios/whatsnew-1.json`:
+language. The page itself is static; the browser draws the list from `/ios/whatsnew-1.json`. Only the newest version is open: the earlier
+ones are in the page but hidden until the button "Show earlier versions" under it is pressed (a link such as `/ios/whatsnew#v0.3` to a
+hidden one opens them first). With one version in the file there is no button:
 ```json
 { "schema": 1, "versions": [ { "version": "0.4", "notes": { "en": "Summary.\n\n• One\n• Two", "de": "…" } } ] }
 ```
 `notes` is keyed by the site's language codes (`en`, `de`, `es`, `ko`, `ja`, `zh`, `zh-tw`, `ru`, `it`, `fr`, `pt`, `tr`); English is required.
 There is no date: App Store Connect does not give the real release date. The number in the file name is the format, as with the
-update rules. The top bar of the home page shows `v<newest version>` of this file and leads to the page. `node build-site.mjs`
+update rules. The top bar of the home page shows a pill with `v<newest version>` of this file and a word that says what it opens ("What's new", key
+`pill.label`) and leads to the page; on a phone narrower than 480 px the language button of the home page shows only its globe so that
+all three fit side by side. `node build-site.mjs`
 refuses a file that is not valid (a version out of order or repeated, no English text, an unknown language, a text over 4000 characters).
 
 To bring it up to date and publish it, run the script (it needs the App Store Connect key in `ASC_KEY_ID`, `ASC_ISSUER_ID` and

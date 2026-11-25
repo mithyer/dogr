@@ -36,8 +36,9 @@
     <a href="#start">{{nav.start}}</a>
     <a href="#feedback">{{nav.feedback}}</a>
   </nav>
-  <!-- The newest version of the app (from the data of the What's new page, see build-site.mjs); the pill leads to that page in this language. -->
-  <a class="pill" href="{{$whatsnew}}" title="{{@pill.title}}">v{{$latest}}</a>
+  <!-- The newest version of the app (from the data of the What's new page, see build-site.mjs); the pill leads to that page in this language.
+       The visible word beside the number (pill.label) tells people what a tap opens: the title alone does not show on a phone. -->
+  <a class="pill" href="{{$whatsnew}}" title="{{@pill.title}}"><span class="ver">v{{$latest}}</span><span class="hint">{{pill.label}}</span></a>
   <!-- The language menu is a plain <details>. Without any script it lists English and the language of this page, nothing more.
        page.js adds the languages that are likely for this visitor (the browser's and the one guessed from the country) when
        the menu is opened, and writes the cookie when a language is picked. -->

@@ -43,8 +43,9 @@
   <p class="crumb"><a href="{{$home}}">{{whatsnew.back}}</a></p>
   <h1>{{whatsnew.h1}}</h1>
   <p class="lead">{{whatsnew.intro}}</p>
-  <!-- whatsnew.js replaces the content with the list. Its own texts for the states it draws (loading, a failure, the mark on the newest version) come from here, in this page's language. -->
-  <div id="releases" data-src="/ios/whatsnew-1.json" data-lang="{{$code}}" data-loading="{{@whatsnew.loading}}" data-error="{{@whatsnew.error}}" data-latest="{{@whatsnew.latest}}" aria-live="polite">
+  <!-- whatsnew.js replaces the content with the list: the newest version, then a button (data-older is its text) that shows the earlier ones.
+       Its own texts for the states it draws (loading, a failure, the mark on the newest version) come from here, in this page's language. -->
+  <div id="releases" data-src="/ios/whatsnew-1.json" data-lang="{{$code}}" data-loading="{{@whatsnew.loading}}" data-error="{{@whatsnew.error}}" data-latest="{{@whatsnew.latest}}" data-older="{{@whatsnew.older}}" aria-live="polite">
     <noscript><p class="status">{{whatsnew.noscript}}</p></noscript>
   </div>
 </main>
