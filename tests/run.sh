@@ -95,7 +95,7 @@ case $1 in
     version)
         # What the installed program says: the version the (stub) installer laid down last, else STUB_COLLIE_VERSION, else a Dogr
         # build (so the cases that are not about the switch see a Collie that is left as it is). The real one prints "<version>+<build>".
-        v=$(cat "$HOME/.collie-version" 2>/dev/null || echo "${STUB_COLLIE_VERSION:-1.30.0-dogr.27}")
+        v=$(cat "$HOME/.collie-version" 2>/dev/null || echo "${STUB_COLLIE_VERSION:-1.30.1-dogr.28}")
         echo "$v+6ebde723db"
         ;;
     start | restart)
@@ -729,11 +729,11 @@ expect_not_called "download"
 # Without Collie: the installer is fetched to a file, run, and the rest follows.
 run_case "install first" COLLIE_INSTALLED=0 -- --tailscale --yes
 expect_rc 0
-expect_called "download https://raw.githubusercontent.com/mithyer/collie/v1.30.0-dogr.27/scripts/install.sh"
-expect_called "installer ran tag=v1.30.0-dogr.27 repo=mithyer/collie"
+expect_called "download https://raw.githubusercontent.com/mithyer/collie/v1.30.1-dogr.28/scripts/install.sh"
+expect_called "installer ran tag=v1.30.1-dogr.28 repo=mithyer/collie"
 expect_order "installer ran" "collie start"
 expect_called "collie pair"
-expect_out "Install the Dogr build of Collie (v1.30.0-dogr.27 from mithyer/collie)"
+expect_out "Install the Dogr build of Collie (v1.30.1-dogr.28 from mithyer/collie)"
 expect_not_called "colliepwa"
 
 # The release can be pinned and the installer address replaced.
@@ -745,8 +745,8 @@ expect_called "installer ran tag=v1.27.0 repo=mithyer/collie"
 # The repository the Dogr build comes from can be replaced; the download address follows it.
 run_case "other repository" COLLIE_INSTALLED=0 DOGR_COLLIE_REPO=someone/collie -- --tailscale --yes
 expect_rc 0
-expect_called "download https://raw.githubusercontent.com/someone/collie/v1.30.0-dogr.27/scripts/install.sh"
-expect_called "installer ran tag=v1.30.0-dogr.27 repo=someone/collie"
+expect_called "download https://raw.githubusercontent.com/someone/collie/v1.30.1-dogr.28/scripts/install.sh"
+expect_called "installer ran tag=v1.30.1-dogr.28 repo=someone/collie"
 
 # The phone app names the Dogr build of Collie it recommends (--collie). It replaces the pinned tag, in the plan, in the address of
 # Collie's installer and in the tag the installer is given.
@@ -755,7 +755,7 @@ expect_rc 0
 expect_called "download https://raw.githubusercontent.com/mithyer/collie/v1.29.0-dogr.3/scripts/install.sh"
 expect_called "installer ran tag=v1.29.0-dogr.3 repo=mithyer/collie"
 expect_out "Install the Dogr build of Collie (v1.29.0-dogr.3 from mithyer/collie)"
-expect_not_called "v1.30.0-dogr.27"
+expect_not_called "v1.30.1-dogr.28"
 # A leading v is fine, and so is the equals sign.
 run_case "collie build with a v" COLLIE_INSTALLED=0 -- --tailscale --collie v1.29.0-dogr.3 --yes
 expect_rc 0
@@ -856,7 +856,7 @@ expect_out "--collie needs a value"
 # The option from older builds of the app (--from iosv0.2) is read and dropped, in both spellings and in any place.
 run_case "old from option" COLLIE_INSTALLED=0 -- --tailscale --from iosv0.2 --yes
 expect_rc 0
-expect_called "installer ran tag=v1.30.0-dogr.27 repo=mithyer/collie"
+expect_called "installer ran tag=v1.30.1-dogr.28 repo=mithyer/collie"
 expect_no_out "Started by the Dogr app"
 run_case "old from option with an equals sign" COLLIE_INSTALLED=0 -- --tailscale --from=iosv1.12.3-beta1 --yes
 expect_rc 0
@@ -867,7 +867,7 @@ expect_called "installer ran tag=v1.29.0-dogr.3 repo=mithyer/collie"
 # Without the option the pinned build is used.
 run_case "no collie option" COLLIE_INSTALLED=0 -- --tailscale --yes
 expect_rc 0
-expect_called "installer ran tag=v1.30.0-dogr.27 repo=mithyer/collie"
+expect_called "installer ran tag=v1.30.1-dogr.28 repo=mithyer/collie"
 
 # A Collie that is already a Dogr build is left as it is, even when the pin is another one.
 run_case "dogr build is left alone" STUB_COLLIE_VERSION=1.28.0-dogr.2 -- --tailscale --yes
@@ -879,11 +879,11 @@ expect_not_called "collie restart"
 # An upstream Collie that is not newer than the pin is switched in place, restarted, and the way back is printed.
 run_case "switch from upstream" STUB_COLLIE_VERSION=1.27.0 -- --tailscale --yes
 expect_rc 0
-expect_out "Collie 1.27.0 is installed. It is switched to the Dogr build of Collie (v1.30.0-dogr.27 from mithyer/collie)"
+expect_out "Collie 1.27.0 is installed. It is switched to the Dogr build of Collie (v1.30.1-dogr.28 from mithyer/collie)"
 expect_out "==> Switching Collie to the Dogr build"
-expect_called "download https://raw.githubusercontent.com/mithyer/collie/v1.30.0-dogr.27/scripts/install.sh"
-expect_called "installer ran tag=v1.30.0-dogr.27 repo=mithyer/collie"
-expect_out "Collie is now 1.30.0-dogr.27"
+expect_called "download https://raw.githubusercontent.com/mithyer/collie/v1.30.1-dogr.28/scripts/install.sh"
+expect_called "installer ran tag=v1.30.1-dogr.28 repo=mithyer/collie"
+expect_out "Collie is now 1.30.1-dogr.28"
 expect_out "COLLIE_UPDATE_REPO=AltanS/collie COLLIE_TAG=v1.27.0 sh"
 expect_out "==> Restarting Collie so the Dogr build runs"
 expect_order "installer ran" "collie restart"
@@ -900,7 +900,7 @@ expect_not_called "installer ran"
 # An upstream Collie that is newer than the pin is never replaced by an older build.
 run_case "newer upstream is left alone" STUB_COLLIE_VERSION=1.31.0 -- --tailscale --yes
 expect_rc 0
-expect_out "Collie 1.31.0 is already installed. It is newer than the Dogr build (v1.30.0-dogr.27), so it is left as it is."
+expect_out "Collie 1.31.0 is already installed. It is newer than the Dogr build (v1.30.1-dogr.28), so it is left as it is."
 expect_not_called "installer ran"
 expect_not_called "collie restart"
 
