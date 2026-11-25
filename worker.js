@@ -4,7 +4,7 @@
 //   /get       sends people to the app in the App Store. The download buttons and the QR code of the home page point here, so the
 //              place they lead to can change without touching the page or the printed code.
 //   /          the home page: picks a language (what the visitor picked, else the browser's, else English) and answers with it.
-//   /ios/whatsnew (and /ios/whatsnew/)  the "What's new" page, which has a page per language like the home page: chosen the same way.
+//   /whatsnew (and /whatsnew/)  the "What's new" page, which has a page per language like the home page: chosen the same way.
 //   /_geo      tells the page which language people in the visitor's country usually read, for the "Suggested" part of its menu.
 // TEST:tests/site.test.mjs
 
@@ -21,7 +21,7 @@ const CACHE_SECONDS = 60;
  * The addresses that answer with the page of the visitor's language, and where that page lives in each language folder.
  * The "What's new" page answers with and without the closing slash. TEST:tests/site.test.mjs[worker: the home page]
  */
-const LANGUAGE_PAGES = { "/": "", "/ios/whatsnew": "ios/whatsnew/", "/ios/whatsnew/": "ios/whatsnew/" };
+const LANGUAGE_PAGES = { "/": "", "/whatsnew": "whatsnew/", "/whatsnew/": "whatsnew/" };
 /** The first line a real script has. Anything else (an HTML error page, say) must never reach `| sh`. */
 const SHEBANG = "#!/bin/sh";
 
@@ -80,7 +80,7 @@ function getApp(request) {
   return new Response(null, { status: 302, headers: { location: APP_STORE_URL, "cache-control": "private, no-store" } });
 }
 /**
- * Answers a request for a page that exists once per language ("/", the home page, and "/ios/whatsnew", the "What's new" page):
+ * Answers a request for a page that exists once per language ("/", the home page, and "/whatsnew", the "What's new" page):
  * the page in the language that suits the visitor.
  * English is sent as the page itself (status 200), not as a redirect, because link-preview fetchers and crawlers send no
  * language and may not follow a redirect. Any other language is a temporary redirect (302) to its own address, which the
@@ -88,7 +88,7 @@ function getApp(request) {
  * headers, so it says so (`Vary`) and is never kept by shared caches.
  * @param {Request} request The incoming request.
  * @param {{ ASSETS: { fetch: (request: Request) => Promise<Response> } }} env The Worker bindings; ASSETS serves the built files.
- * @param {string} folder The page inside a language folder: "" for the home page, "ios/whatsnew/" for the "What's new" page.
+ * @param {string} folder The page inside a language folder: "" for the home page, "whatsnew/" for the "What's new" page.
  * @returns {Promise<Response>} The English page, a redirect to another language, or a plain 405.
  */
 async function languagePage(request, env, folder) {

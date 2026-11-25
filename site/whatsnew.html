@@ -1,9 +1,9 @@
 <!doctype html>
 <!--
-  TEMPLATE of the dogr.dev "What's new" page (/ios/whatsnew). build-site.mjs writes one finished page per language to
-  /<code>/ios/whatsnew/ from this file and the same strings table as the home page (site/i18n/strings.csv, keys "whatsnew.*").
+  TEMPLATE of the dogr.dev "What's new" page (/whatsnew). build-site.mjs writes one finished page per language to
+  /<code>/whatsnew/ from this file and the same strings table as the home page (site/i18n/strings.csv, keys "whatsnew.*").
   The same placeholders as page.html work here ({{key}}, {{@key}}, {{$name}}), and {{$home}} is the home page of this language.
-  The list of versions is NOT in this file: whatsnew.js reads /ios/whatsnew-1.json in the browser and draws it, so a new
+  The list of versions is NOT in this file: whatsnew.js reads /whatsnew-1.json in the browser and draws it, so a new
   version is a change of that file only (tools/whatsnew.mjs makes it).
   All comments in this file are removed from the finished pages.
 -->
@@ -45,7 +45,7 @@
   <p class="lead">{{whatsnew.intro}}</p>
   <!-- whatsnew.js replaces the content with the list: the newest version, then a button (data-older is its text) that shows the earlier ones.
        Its own texts for the states it draws (loading, a failure, the mark on the newest version) come from here, in this page's language. -->
-  <div id="releases" data-src="/ios/whatsnew-1.json" data-lang="{{$code}}" data-loading="{{@whatsnew.loading}}" data-error="{{@whatsnew.error}}" data-latest="{{@whatsnew.latest}}" data-older="{{@whatsnew.older}}" aria-live="polite">
+  <div id="releases" data-src="/whatsnew-1.json" data-lang="{{$code}}" data-loading="{{@whatsnew.loading}}" data-error="{{@whatsnew.error}}" data-latest="{{@whatsnew.latest}}" data-older="{{@whatsnew.older}}" aria-live="polite">
     <noscript><p class="status">{{whatsnew.noscript}}</p></noscript>
   </div>
 </main>

@@ -391,13 +391,13 @@ twelve as the app).
 | `site/i18n/strings.csv` | Every text of the page, one row per key, one column per language (`key,en,de,es,ko,ja,zh,zh-TW,ru,it,fr,pt,tr`, the order of the app's table). Edit this file, never the generated pages |
 | `site/style.css`, `site/page.js`, `site/icon.svg`, `site/img/` | Styles, the copy buttons and the language menu, the icon and the screenshots |
 | `site/ios/update-rules-<n>.json` | The rules the iPhone app reads to decide how strongly to suggest an update (see below). `<n>` is the format number |
-| `site/whatsnew.html`, `site/whatsnew.js`, `site/whatsnew.mjs`, `site/ios/whatsnew-<n>.json` | The "What's new" page (`/ios/whatsnew`): the template (built once per language like the home page), the script that draws the list in the browser, the rules that script uses (splitting the notes, choosing a language), and the data file it draws from (see below). `<n>` is the format number |
+| `site/whatsnew.html`, `site/whatsnew.js`, `site/whatsnew.mjs`, `site/whatsnew-<n>.json` | The "What's new" page (`/whatsnew`): the template (built once per language like the home page), the script that draws the list in the browser, the rules that script uses (splitting the notes, choosing a language), and the data file it draws from (see below). `<n>` is the format number |
 | `tools/whatsnew.mjs` | Keeps that data file up to date from the App Store and publishes the page (see below) |
 | `lang.js` | The twelve languages and the rules that pick one (cookie, then `Accept-Language`, then English; a country to a language). Used by the Worker, the build and the page |
 | `app-store.js` | The App Store address `/get` leads to (`APP_STORE_URL`). It is not in `worker.js` because a Worker must export only its handler: the current Cloudflare runtime refuses other exports, which also broke `wrangler dev` |
-| `build-site.mjs` | Builds `dist/` (git-ignored): one page per language at `/<code>/` and `/<code>/ios/whatsnew/`, `sitemap.xml`, `robots.txt` and the files above. It refuses to build when a language lacks a key, has a key too many, an empty text, other markup than English or another number |
-| `worker.js` | Answers `/setup.sh` (passes through the script on the `main` branch of this repository, kept for 60 seconds; anything that does not start with `#!/bin/sh` becomes an error status, so a broken answer never reaches `\| sh`), `/` and `/ios/whatsnew` (send the visitor to the page in their language), `/get` (a temporary redirect to the app's page in the App Store, `APP_STORE_URL` of `app-store.js`; the download badges and the QR code of the home page point here, so the target can change without making the code again) and `/_geo` (a language suggested by the country of the request, nothing else) |
-| `wrangler.jsonc` | Names the Worker `dogr-site`, runs `node build-site.mjs` before every deploy, serves `dist/`, sends only `/setup.sh`, `/`, `/get`, `/_geo`, `/ios/whatsnew` and `/ios/whatsnew/` to `worker.js`, and attaches the domain `dogr.dev` |
+| `build-site.mjs` | Builds `dist/` (git-ignored): one page per language at `/<code>/` and `/<code>/whatsnew/`, `sitemap.xml`, `robots.txt` and the files above. It refuses to build when a language lacks a key, has a key too many, an empty text, other markup than English or another number |
+| `worker.js` | Answers `/setup.sh` (passes through the script on the `main` branch of this repository, kept for 60 seconds; anything that does not start with `#!/bin/sh` becomes an error status, so a broken answer never reaches `\| sh`), `/` and `/whatsnew` (send the visitor to the page in their language), `/get` (a temporary redirect to the app's page in the App Store, `APP_STORE_URL` of `app-store.js`; the download badges and the QR code of the home page point here, so the target can change without making the code again) and `/_geo` (a language suggested by the country of the request, nothing else) |
+| `wrangler.jsonc` | Names the Worker `dogr-site`, runs `node build-site.mjs` before every deploy, serves `dist/`, sends only `/setup.sh`, `/`, `/get`, `/_geo`, `/whatsnew` and `/whatsnew/` to `worker.js`, and attaches the domain `dogr.dev` |
 
 How a visitor gets a language: `/` looks at the `lang` cookie (set only when someone picks a language in the menu), then at the
 browser's language list, then falls back to English; English is shown at `/` itself, any other language by a temporary
@@ -442,11 +442,11 @@ in the Cloudflare dashboard (Workers & Pages); nothing else depends on it.
 
 ### The "What's new" page
 
-`https://dogr.dev/ios/whatsnew` shows what each version of the app changed, newest first, in the visitor's language (chosen like the
-home page: `/ios/whatsnew` redirects to `/<code>/ios/whatsnew/`, English is served at the address itself). The notes are the
+`https://dogr.dev/whatsnew` shows what each version of the app changed, newest first, in the visitor's language (chosen like the
+home page: `/whatsnew` redirects to `/<code>/whatsnew/`, English is served at the address itself). The notes are the
 App Store's own "What's New" texts, one per language. A language a version has no text in shows the English text, marked with the
-language. The page itself is static; the browser draws the list from `/ios/whatsnew-1.json`. Only the newest version is open: the earlier
-ones are in the page but hidden until the button "Show earlier versions" under it is pressed (a link such as `/ios/whatsnew#v0.3` to a
+language. The page itself is static; the browser draws the list from `/whatsnew-1.json`. Only the newest version is open: the earlier
+ones are in the page but hidden until the button "Show earlier versions" under it is pressed (a link such as `/whatsnew#v0.3` to a
 hidden one opens them first). With one version in the file there is no button:
 ```json
 { "schema": 1, "versions": [ { "version": "0.4", "notes": { "en": "Summary.\n\n• One\n• Two", "de": "…" } } ] }

@@ -1,6 +1,6 @@
 {
   // The dogr.dev site: one page per language built from ./site into ./dist, and one small Worker (worker.js) that answers
-  // /setup.sh, the root address "/" and /ios/whatsnew (they pick the language), /get (a redirect to the App Store) and /_geo (a
+  // /setup.sh, the root address "/" and /whatsnew (they pick the language), /get (a redirect to the App Store) and /_geo (a
   // country-based language guess for the menu).
   // Deploy by hand with: npx wrangler@4 deploy   (it builds first; see "The dogr.dev site" in README.md)
   "name": "dogr-site",
@@ -20,9 +20,9 @@
     // The Worker reads the finished pages through this binding.
     "binding": "ASSETS",
     // These addresses are answered by worker.js; everything else is a plain file in ./dist (the language pages live at
-    // /en/, /de/, /en/ios/whatsnew/ and so on, which are never sent to the Worker, so an explicit language address can never be
-    // redirected). /ios/whatsnew is listed with and without the closing slash; /ios/whatsnew-1.json (the data of that page) is a plain file.
-    "run_worker_first": ["/setup.sh", "/", "/_geo", "/get", "/ios/whatsnew", "/ios/whatsnew/"]
+    // /en/, /de/, /en/whatsnew/ and so on, which are never sent to the Worker, so an explicit language address can never be
+    // redirected). /whatsnew is listed with and without the closing slash; /whatsnew-1.json (the data of that page) is a plain file.
+    "run_worker_first": ["/setup.sh", "/", "/_geo", "/get", "/whatsnew", "/whatsnew/"]
   },
   "routes": [{ "pattern": "dogr.dev", "custom_domain": true }]
 }

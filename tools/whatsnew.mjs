@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Updates and publishes the "What's new" page of dogr.dev (/ios/whatsnew).
+// Updates and publishes the "What's new" page of dogr.dev (/whatsnew).
 //
-// The page draws itself in the browser from one data file, site/ios/whatsnew-1.json (newest version first, one text per language).
+// The page draws itself in the browser from one data file, site/whatsnew-1.json (newest version first, one text per language).
 // This script keeps that file up to date from the App Store:
 //   1. asks App Store Connect (through the `asc` command-line tool) for the released iOS versions of the app;
 //   2. keeps those NEWER than the newest version already in the file (nothing newer: it says so and stops);
@@ -26,7 +26,7 @@ import { APP_STORE_URL } from "../app-store.js";
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
 /** Where the data file lives, relative to the repository root. */
-export const DATA_FILE = `site/ios/${whatsNewName(WHATSNEW_SCHEMA)}`;
+export const DATA_FILE = `site/${whatsNewName(WHATSNEW_SCHEMA)}`;
 
 /** The file with the App Store Connect key (the same one `app-ios/Herdogr/scripts/release-testflight.py` reads). */
 const KEY_FILE = "~/.config/dogr/testflight.json";
@@ -164,7 +164,7 @@ export function parseArgs(argv) {
 }
 
 /** What `--help` prints. */
-export const HELP = `Updates and publishes https://dogr.dev/ios/whatsnew from the App Store.
+export const HELP = `Updates and publishes https://dogr.dev/whatsnew from the App Store.
 
   node tools/whatsnew.mjs [options]
 

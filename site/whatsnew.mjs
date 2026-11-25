@@ -1,4 +1,4 @@
-// The rules of the "What's new" page (/ios/whatsnew), apart from the page itself: how the notes of a version are split into the
+// The rules of the "What's new" page (/whatsnew), apart from the page itself: how the notes of a version are split into the
 // paragraphs and bullets the page draws, and which language's text a visitor gets. It has no imports and touches no page, so the
 // browser loads it as /whatsnew.mjs (from whatsnew.js) and the tests load it as a plain module.
 // The notes are the text App Store Connect holds as "What's New": a short summary, then bullet lines that start with "•".

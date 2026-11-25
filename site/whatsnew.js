@@ -1,5 +1,5 @@
-// Script of the "What's new" page (/ios/whatsnew). The page is the same in every language except for its texts; this script
-// reads the data file (/ios/whatsnew-1.json), which holds the notes of every version in every language, and draws the list for
+// Script of the "What's new" page (/whatsnew). The page is the same in every language except for its texts; this script
+// reads the data file (/whatsnew-1.json), which holds the notes of every version in every language, and draws the list for
 // the language of the page. Every text goes in as plain text (textContent), never as HTML, so the data cannot add markup.
 // Only the newest version is drawn open: the earlier ones are in the page but hidden until the button under the newest version is pressed.
 // Without the script the page shows its own note instead of the list (the <noscript> in the template).
