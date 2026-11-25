@@ -63,6 +63,11 @@ h2 { font-size: clamp(28px, 4vw, 40px); margin-bottom: 14px; }
 .top nav a { text-decoration: none; color: var(--muted); }
 .top nav a:hover { color: var(--ink); }
 .pill { font-size: 12px; font-weight: 700; padding: 3px 10px; border: 2px solid var(--ink); border-radius: 999px; background: var(--cream); color: #23413b; white-space: nowrap; }
+/* The pill in the top bar is a link to the What's new page (it shows the newest version). */
+a.pill { text-decoration: none; }
+a.pill:hover, a.pill:focus-visible { background: var(--mint); }
+/* The top bar of a page without a menu of sections (What's new): the name at the left, the language menu at the right. */
+.top.simple .lang { margin-left: auto; }
 
 /* ----- hero ----- */
 .hero { padding: 40px 0 72px; }
@@ -230,11 +235,9 @@ footer p { margin: 0 0 8px; max-width: 760px; }
   .author { grid-template-columns: 1fr; }
 }
 
-/* On the narrowest phones the top bar keeps the name and the language menu; the note "Early version" is in the page anyway. */
+/* On the narrowest phones the top bar keeps the name, the version pill (a few characters) and the language menu. */
 @media (max-width: 560px) {
   .top { gap: 12px; }
-  .top .pill { display: none; }
-  .lang { margin-left: auto; }
   .brand .for { display: none; }
   .routes { grid-template-columns: 1fr; }
   .lang .menu { min-width: 180px; }
@@ -253,6 +256,25 @@ footer p { margin: 0 0 8px; max-width: 760px; }
   td.us { background: transparent; }
   td:nth-child(2)::before, td:nth-child(3)::before { content: attr(data-label); display: block; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
 }
+
+/* The What's new page: it is a document page (.doc) whose list of versions is drawn by whatsnew.js, one card per version. */
+.whatsnew .crumb { margin: 0 0 4px; font-size: 15px; }
+.whatsnew .crumb a { color: var(--muted); text-decoration: none; }
+.whatsnew .crumb a::before { content: "\2190\00a0"; }
+.whatsnew .crumb a:hover { color: var(--ink); }
+.whatsnew .lead { color: var(--muted); margin-bottom: 28px; }
+.whatsnew .status { color: var(--muted); }
+.whatsnew .status.error { color: var(--bad); }
+.release { background: var(--card); border: 2px solid var(--ink); border-radius: 16px; padding: 22px 26px 12px; box-shadow: 5px 5px 0 var(--shadow); margin-bottom: 26px; scroll-margin-top: 16px; }
+.whatsnew .release h2 { margin: 0 0 12px; font-size: 26px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.whatsnew .release h2 a { text-decoration: none; }
+.whatsnew .release h2 a:hover { text-decoration: underline; text-decoration-color: var(--orange); }
+/* The mark on the newest version has the look of the pills of the top bar. */
+.release .latest { font-size: 12px; font-weight: 700; letter-spacing: 0; padding: 3px 10px; border: 2px solid var(--ink); border-radius: 999px; background: var(--cream); color: #23413b; }
+.whatsnew .release .notes p { margin: 0 0 12px; white-space: pre-line; }
+.whatsnew .release .notes .summary { font-size: 18px; font-weight: 600; }
+.whatsnew .release .notes ul { margin: 0 0 12px; padding-left: 22px; }
+.whatsnew .release .notes li { margin: 6px 0; }
 
 /* The plain document pages (privacy, support). */
 .doc { padding-block: 28px 56px; max-width: 760px; hyphens: manual; }

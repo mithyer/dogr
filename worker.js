@@ -1,12 +1,14 @@
-// Worker for dogr.dev. wrangler.jsonc sends exactly four addresses here; everything else on dogr.dev is a plain file from
+// Worker for dogr.dev. wrangler.jsonc sends exactly these addresses here; everything else on dogr.dev is a plain file from
 // ./dist (built from ./site by build-site.mjs) that Cloudflare serves without running this code.
 //   /setup.sh  passes through the script that is on the main branch of the dogr repository on GitHub.
 //   /get       sends people to the app in the App Store. The download buttons and the QR code of the home page point here, so the
 //              place they lead to can change without touching the page or the printed code.
 //   /          the home page: picks a language (what the visitor picked, else the browser's, else English) and answers with it.
+//   /ios/whatsnew (and /ios/whatsnew/)  the "What's new" page, which has a page per language like the home page: chosen the same way.
 //   /_geo      tells the page which language people in the visitor's country usually read, for the "Suggested" part of its menu.
 // TEST:tests/site.test.mjs
 
+import { APP_STORE_URL } from "./app-store.js";
 import { languageForCountry, pickLanguage } from "./lang.js";
 
 /** Where the script lives. Whatever is on this branch is what the next person runs, exactly as with the GitHub address. */
@@ -16,10 +18,10 @@ const SCRIPT_URL = "https://raw.githubusercontent.com/mithyer/dogr/main/setup.sh
 const CACHE_SECONDS = 60;
 
 /**
- * Where /get leads: the app's page in the App Store (the address works in every country, the store picks the storefront).
- * The number is the app record of `dev.dogr.app` in App Store Connect. It answers "not found" until the app is released.
+ * The addresses that answer with the page of the visitor's language, and where that page lives in each language folder.
+ * The "What's new" page answers with and without the closing slash. TEST:tests/site.test.mjs[worker: the home page]
  */
-export const APP_STORE_URL = "https://apps.apple.com/app/id6835292499";
+const LANGUAGE_PAGES = { "/": "", "/ios/whatsnew": "ios/whatsnew/", "/ios/whatsnew/": "ios/whatsnew/" };
 /** The first line a real script has. Anything else (an HTML error page, say) must never reach `| sh`. */
 const SHEBANG = "#!/bin/sh";
 
@@ -78,16 +80,18 @@ function getApp(request) {
   return new Response(null, { status: 302, headers: { location: APP_STORE_URL, "cache-control": "private, no-store" } });
 }
 /**
- * Answers a request for "/": the home page in the language that suits the visitor.
+ * Answers a request for a page that exists once per language ("/", the home page, and "/ios/whatsnew", the "What's new" page):
+ * the page in the language that suits the visitor.
  * English is sent as the page itself (status 200), not as a redirect, because link-preview fetchers and crawlers send no
  * language and may not follow a redirect. Any other language is a temporary redirect (302) to its own address, which the
  * browser does not remember, so a visitor who later changes language is not stuck. The answer depends on two request
  * headers, so it says so (`Vary`) and is never kept by shared caches.
  * @param {Request} request The incoming request.
  * @param {{ ASSETS: { fetch: (request: Request) => Promise<Response> } }} env The Worker bindings; ASSETS serves the built files.
+ * @param {string} folder The page inside a language folder: "" for the home page, "ios/whatsnew/" for the "What's new" page.
  * @returns {Promise<Response>} The English page, a redirect to another language, or a plain 405.
  */
-async function homePage(request, env) {
+async function languagePage(request, env, folder) {
   if (request.method !== "GET" && request.method !== "HEAD") return failure(405, "Use GET.");
   const url = new URL(request.url);
   const code = pickLanguage({
@@ -98,10 +102,10 @@ async function homePage(request, env) {
   if (code !== "en") {
     return new Response(null, {
       status: 302,
-      headers: { location: `/${code}/${url.search}`, vary: "Accept-Language, Cookie", "cache-control": "private, no-store" },
+      headers: { location: `/${code}/${folder}${url.search}`, vary: "Accept-Language, Cookie", "cache-control": "private, no-store" },
     });
   }
-  const page = await env.ASSETS.fetch(new Request(new URL("/en/", url), { method: request.method, headers: request.headers }));
+  const page = await env.ASSETS.fetch(new Request(new URL(`/en/${folder}`, url), { method: request.method, headers: request.headers }));
   const answer = new Response(page.body, page);
   answer.headers.set("vary", "Accept-Language, Cookie");
   answer.headers.set("cache-control", "private, max-age=0, must-revalidate");
@@ -164,7 +168,7 @@ function geoAnswer(language) {
 
 export default {
   /**
-   * Routes the four addresses this Worker answers.
+   * Routes the addresses this Worker answers.
    * @param {Request} request The incoming request.
    * @param {{ ASSETS: { fetch: (request: Request) => Promise<Response> } }} env The Worker bindings.
    * @returns {Promise<Response>} The answer; anything unexpected gets a plain 404.
@@ -174,12 +178,14 @@ export default {
     if (pathname === "/setup.sh") return setupScript(request);
     if (pathname === "/_geo") return geo(request);
     if (pathname === "/get") return getApp(request);
-    if (pathname === "/") {
+    // The address of a page that exists once per language, and the folder of its pages inside each language folder.
+    const folder = LANGUAGE_PAGES[pathname];
+    if (folder !== undefined) {
       try {
-        return await homePage(request, env);
+        return await languagePage(request, env, folder);
       } catch {
         // Whatever went wrong, the English page is better than an error.
-        return env.ASSETS.fetch(new Request(new URL("/en/", request.url)));
+        return env.ASSETS.fetch(new Request(new URL(`/en/${folder}`, request.url)));
       }
     }
     return failure(404, "Not found.");

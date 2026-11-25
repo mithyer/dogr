@@ -4,8 +4,9 @@
 //
 // Input (all in ./site): page.html (the template), i18n/strings.csv (ONE table of every text: a row per key, a column per
 // language, the same layout as the app's app-ios/Herdogr/l10n/strings.csv; the English column is the reference),
-// style.css, page.js, icon.svg, img/ and ios/ (the rules files of the app's update reminder, update-rules-<format>.json). Also ../lang.js, the language
-// table that the Worker and the page share.
+// style.css, page.js, icon.svg, img/ and ios/ (the rules files of the app's update reminder, update-rules-<format>.json, and the data of
+// the "What's new" page, whatsnew-<format>.json). Also whatsnew.html (the template of the "What's new" page, which is written once per
+// language like the home page) and ../lang.js, the language table that the Worker and the page share.
 // The build STOPS (exit status 1) when a language lacks a text that English has, when the template asks for a string that does
 // not exist, or when a translation changes the markup or the numbers of the English text; a page that is missing a sentence
 // or has a broken link must never reach the site. wrangler.jsonc runs this file before every deploy and dev run.
@@ -14,7 +15,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { LANGUAGES } from "./lang.js";
+import { LANGUAGES, isCode } from "./lang.js";
 
 /** The public address of the site, used in canonical links, language alternates and the sitemap. */
 export const ORIGIN = "https://dogr.dev";
@@ -23,7 +24,7 @@ export const ORIGIN = "https://dogr.dev";
 const ROOT = dirname(fileURLToPath(import.meta.url));
 
 /** Files and folders of `site/` that are copied to the output unchanged. */
-const STATIC_ENTRIES = ["style.css", "page.js", "country.mjs", "vendor", "icon.svg", "img", "ios"];
+const STATIC_ENTRIES = ["style.css", "page.js", "country.mjs", "whatsnew.js", "whatsnew.mjs", "vendor", "icon.svg", "img", "ios"];
 /** The folder of `site/` that holds the rules files of the iPhone app's update reminder (served under /ios/). */
 export const UPDATE_RULES_DIR = "ios";
 /**
@@ -38,28 +39,47 @@ export function updateRulesName(schema) {
 /** The levels a rule may name, from the quietest to the loudest. */
 const UPDATE_LEVELS = ["green", "orange", "red"];
 /** A version as the app compares it: two to four numbers separated by dots (at least two, so a JSON object keeps its order). */
-const UPDATE_VERSION = /^\d+\.\d+(\.\d+){0,2}$/;
+export const UPDATE_VERSION = /^\d+\.\d+(\.\d+){0,2}$/;
 
 /** The plain English pages (site/pages/<name>.html), each written to /<name>/. They have no language menu and no strings table. */
 export const PLAIN_PAGES = ["privacy", "support"];
 
+/** The folder of the home page inside a language folder: none, the home page is the language folder itself. */
+export const HOME_FOLDER = "";
 /**
- * The address a language page is served at, which is also its path in the output folder.
- * @param {string} code Language code.
- * @returns {string} For example `/de/`.
+ * The folder of the "What's new" page inside a language folder: `/<code>/ios/whatsnew/`. The Worker answers `/ios/whatsnew` (and
+ * the same with a closing slash) with the page of the right language, the way it does for `/`.
  */
-export function pathOf(code) {
-  return `/${code}/`;
+export const WHATSNEW_FOLDER = "ios/whatsnew/";
+/** The template of the "What's new" page (in `site/`), written once per language like the home page. */
+const WHATSNEW_TEMPLATE = "whatsnew.html";
+/** The format number of the "What's new" data file. A new format is a new file, so a page that only knows the old one keeps reading the old file. */
+export const WHATSNEW_SCHEMA = 1;
+/** The name of the "What's new" data file of a format (in `site/ios/`, served at `/ios/`), for example `whatsnew-1.json`. */
+export function whatsNewName(schema = WHATSNEW_SCHEMA) {
+  return `whatsnew-${schema}.json`;
 }
 
 /**
- * The address search engines should treat as the page of a language. English is the page at the root address, which the
- * Worker answers with the English page unless the visitor asked for something else, so it is the one to show people.
+ * The address a language page is served at, which is also its path in the output folder.
  * @param {string} code Language code.
+ * @param {string} [folder] The page inside the language folder: `HOME_FOLDER` (the default) or `WHATSNEW_FOLDER`.
+ * @returns {string} For example `/de/` or `/de/ios/whatsnew/`.
+ */
+export function pathOf(code, folder = HOME_FOLDER) {
+  return `/${code}/${folder}`;
+}
+
+/**
+ * The address search engines should treat as the page of a language. English is the page at the address without a language
+ * (`/` and `/ios/whatsnew/`), which the Worker answers with the English page unless the visitor asked for something else, so
+ * it is the one to show people.
+ * @param {string} code Language code.
+ * @param {string} [folder] The page inside the language folder: `HOME_FOLDER` (the default) or `WHATSNEW_FOLDER`.
  * @returns {string} A full address.
  */
-export function canonicalOf(code) {
-  return code === "en" ? `${ORIGIN}/` : `${ORIGIN}${pathOf(code)}`;
+export function canonicalOf(code, folder = HOME_FOLDER) {
+  return code === "en" ? `${ORIGIN}/${folder}` : `${ORIGIN}${pathOf(code, folder)}`;
 }
 
 /**
@@ -281,11 +301,12 @@ function plainText(value) {
 
 /**
  * The `<link rel="alternate">` lines that tell search engines about the other languages of the page.
- * @returns {string} One line per language plus `x-default`, which is English at the root address.
+ * @param {string} folder The page inside the language folder (`HOME_FOLDER` or `WHATSNEW_FOLDER`).
+ * @returns {string} One line per language plus `x-default`, which is English at the address without a language.
  */
-function alternates() {
-  const lines = LANGUAGES.map(({ code, html }) => `<link rel="alternate" hreflang="${html}" href="${canonicalOf(code)}">`);
-  lines.push(`<link rel="alternate" hreflang="x-default" href="${ORIGIN}/">`);
+function alternates(folder) {
+  const lines = LANGUAGES.map(({ code, html }) => `<link rel="alternate" hreflang="${html}" href="${canonicalOf(code, folder)}">`);
+  lines.push(`<link rel="alternate" hreflang="x-default" href="${ORIGIN}/${folder}">`);
   return lines.join("\n");
 }
 
@@ -294,14 +315,15 @@ function alternates() {
  * languages that are likely for the visitor (the browser's, the one guessed from the country) are added by page.js when the
  * menu is opened. Every link goes to the fixed address of a language, which the Worker never redirects.
  * @param {string} current Code of the page being built; its link is marked as the current one.
+ * @param {string} [folder] The page being built (`HOME_FOLDER`, the default, or `WHATSNEW_FOLDER`): each link goes to the same page in another language.
  * @returns {string} The `<li>` lines.
  */
-export function languageItems(current) {
+export function languageItems(current, folder = HOME_FOLDER) {
   const shown = LANGUAGES.filter(({ code }) => code === current || code === "en");
   return shown
     .map(({ code, name, html }) => {
       const mark = code === current ? ' aria-current="true"' : "";
-      return `        <li><a href="${pathOf(code)}" lang="${html}" hreflang="${html}" data-code="${code}"${mark}>${name}</a></li>`;
+      return `        <li><a href="${pathOf(code, folder)}" lang="${html}" hreflang="${html}" data-code="${code}"${mark}>${name}</a></li>`;
     })
     .join("\n");
 }
@@ -311,10 +333,12 @@ export function languageItems(current) {
  * @param {string} template The template text.
  * @param {Record<string, string>} values The strings of the language.
  * @param {string} code The language code.
+ * @param {{ folder?: string, computed?: Record<string, string> }} [options] `folder`: the page being written (`HOME_FOLDER`, the
+ *   default, or `WHATSNEW_FOLDER`); `computed`: more `{{$name}}` values for the template (for example `latest`, the newest version).
  * @returns {string} The page as HTML.
  * @throws {Error} When the template asks for a string or a computed value that does not exist.
  */
-export function renderPage(template, values, code) {
+export function renderPage(template, values, code, { folder = HOME_FOLDER, computed: extra = {} } = {}) {
   const language = LANGUAGES.find((candidate) => candidate.code === code);
   if (!language) throw new Error(`unknown language ${code}`);
   const computed = {
@@ -322,12 +346,17 @@ export function renderPage(template, values, code) {
     code,
     name: escapeHtml(language.name),
     locale: language.locale,
-    path: pathOf(code),
-    canonical: canonicalOf(code),
-    alternates: alternates(),
-    languages: languageItems(code),
+    // The page being written, and the home page and the "What's new" page of this language (the pages link to each other).
+    path: pathOf(code, folder),
+    folder,
+    home: pathOf(code, HOME_FOLDER),
+    whatsnew: pathOf(code, WHATSNEW_FOLDER),
+    canonical: canonicalOf(code, folder),
+    alternates: alternates(folder),
+    languages: languageItems(code, folder),
     // Apple's own "Download on the App Store" badge in this language (site/img/appstore/<code>.svg, unchanged files).
     badge: `/img/appstore/${code}.svg`,
+    ...extra,
   };
   return stripComments(template).replace(PLACEHOLDER, (_whole, kind, key) => {
     if (kind === "$") {
@@ -404,6 +433,7 @@ export function checkUpdateRules(text, schema = 1) {
 /**
  * Checks every file in the rules folder: each one must be named `update-rules-<n>.json` and be good, and format 1 (the one the
  * first app reads) must exist. A file with any other name is refused, because a typo in a name would hide a rule from the app.
+ * The data files of the "What's new" page (`whatsnew-<n>.json`) share the folder and are checked by `checkWhatsNewFolder`.
  * @param {string} sourceDir The `site` folder.
  * @returns {string[]} What is wrong; empty when all is fine.
  */
@@ -413,20 +443,99 @@ export function checkUpdateRulesFolder(sourceDir) {
   const problems = [];
   if (!names.includes(updateRulesName(1))) problems.push(`${UPDATE_RULES_DIR}/${updateRulesName(1)}: missing`);
   for (const name of names.sort()) {
+    if (WHATSNEW_FILE_NAME.test(name)) continue;
     const schema = /^update-rules-([1-9]\d*)\.json$/.exec(name)?.[1];
     if (schema === undefined) problems.push(`${UPDATE_RULES_DIR}/${name}: not a rules file (they are named update-rules-<number>.json)`);
     else problems.push(...checkUpdateRules(readFileSync(join(folder, name), "utf8"), Number(schema)));
   }
   return problems;
 }
+/** The length limit of one version's notes in one language: the App Store's own limit for "What's New". */
+const WHATSNEW_MAX_LENGTH = 4000;
+/** A data file of the "What's new" page, by name. */
+const WHATSNEW_FILE_NAME = /^whatsnew-[1-9]\d*\.json$/;
+
 /**
- * The sitemap: every language page, each listing all its alternates.
+ * Checks the text of a "What's new" data file. The page builds itself from this file, so a mistake would show up as a page that
+ * is empty or in the wrong order; the build refuses it instead.
+ * Shape: `{ "schema": 1, "versions": [ { "version": "0.4", "notes": { "en": "...", "de": "..." } } ] }`, the newest version first.
+ * `notes` is the text the App Store shows as "What's New" in each language, keyed by the language codes of this site; English is required.
+ * @param {string} text The file's text.
+ * @param {number} [schema] The format number the file's name promises; `"schema"` inside the file must say the same.
+ * @returns {string[]} What is wrong with it; empty when it is fine.
+ */
+export function checkWhatsNew(text, schema = WHATSNEW_SCHEMA) {
+  const file = `${UPDATE_RULES_DIR}/${whatsNewName(schema)}`;
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (error) {
+    return [`${file}: not valid JSON (${error.message})`];
+  }
+  const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+  if (!isObject(data)) return [`${file}: must be a JSON object`];
+  const problems = [];
+  if (data.schema !== schema) problems.push(`${file}: "schema" must be ${schema}, the number in the file name`);
+  if (!Array.isArray(data.versions) || data.versions.length === 0) {
+    problems.push(`${file}: "versions" must be a list with at least one version`);
+    return problems;
+  }
+  let previous = null;
+  for (const [index, entry] of data.versions.entries()) {
+    const where = `${file}: versions[${index}]`;
+    if (!isObject(entry) || !UPDATE_VERSION.test(entry.version ?? "")) {
+      problems.push(`${where} needs a "version" like 0.3`);
+      continue;
+    }
+    // The newest comes first, and a version appears once: the page shows the list as it is.
+    if (previous !== null && compareVersions(previous, entry.version) <= 0) problems.push(`${where}: "${entry.version}" must come before "${previous}" (newest first)`);
+    previous = entry.version;
+    if (!isObject(entry.notes)) {
+      problems.push(`${where}: "notes" must be an object with one text per language`);
+      continue;
+    }
+    if (!("en" in entry.notes)) problems.push(`${where}: "notes" needs an English text (it is what the other languages fall back to)`);
+    for (const [code, note] of Object.entries(entry.notes)) {
+      if (!isCode(code)) problems.push(`${where}: "${code}" is not a language code of this site`);
+      else if (typeof note !== "string" || note.trim() === "") problems.push(`${where}: the ${code} text must be a non-empty string`);
+      else if (note.length > WHATSNEW_MAX_LENGTH) problems.push(`${where}: the ${code} text is longer than ${WHATSNEW_MAX_LENGTH} characters`);
+    }
+  }
+  return problems;
+}
+
+/**
+ * Checks the "What's new" files of the `ios` folder: format 1 must exist, and every `whatsnew-<n>.json` must be good.
+ * @param {string} sourceDir The `site` folder.
+ * @returns {string[]} What is wrong; empty when all is fine.
+ */
+export function checkWhatsNewFolder(sourceDir) {
+  const folder = join(sourceDir, UPDATE_RULES_DIR);
+  const names = existsSync(folder) ? readdirSync(folder).filter((name) => WHATSNEW_FILE_NAME.test(name)).sort() : [];
+  if (!names.includes(whatsNewName())) return [`${UPDATE_RULES_DIR}/${whatsNewName()}: missing`];
+  return names.flatMap((name) => checkWhatsNew(readFileSync(join(folder, name), "utf8"), Number(/^whatsnew-(\d+)\.json$/.exec(name)[1])));
+}
+
+/**
+ * The newest version in the "What's new" data file the page is built from (the home page shows it in the top bar).
+ * @param {string} sourceDir The `site` folder; its file must have passed `checkWhatsNewFolder`.
+ * @returns {string} A version such as `0.4`.
+ */
+export function latestWhatsNew(sourceDir) {
+  return JSON.parse(readFileSync(join(sourceDir, UPDATE_RULES_DIR, whatsNewName()), "utf8")).versions[0].version;
+}
+
+/**
+ * The sitemap: every language page of the home page and of the "What's new" page, each listing all its alternates.
  * @returns {string} The XML text.
  */
 export function sitemap() {
-  const links = LANGUAGES.map(({ code, html }) => `    <xhtml:link rel="alternate" hreflang="${html}" href="${canonicalOf(code)}"/>`);
-  links.push(`    <xhtml:link rel="alternate" hreflang="x-default" href="${ORIGIN}/"/>`);
-  const urls = LANGUAGES.map(({ code }) => `  <url>\n    <loc>${canonicalOf(code)}</loc>\n${links.join("\n")}\n  </url>`);
+  const urls = [];
+  for (const folder of [HOME_FOLDER, WHATSNEW_FOLDER]) {
+    const links = LANGUAGES.map(({ code, html }) => `    <xhtml:link rel="alternate" hreflang="${html}" href="${canonicalOf(code, folder)}"/>`);
+    links.push(`    <xhtml:link rel="alternate" hreflang="x-default" href="${ORIGIN}/${folder}"/>`);
+    for (const { code } of LANGUAGES) urls.push(`  <url>\n    <loc>${canonicalOf(code, folder)}</loc>\n${links.join("\n")}\n  </url>`);
+  }
   for (const name of PLAIN_PAGES) urls.push(`  <url>\n    <loc>${ORIGIN}/${name}/</loc>\n  </url>`);
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -450,17 +559,24 @@ export function robots() {
  */
 export function build({ sourceDir = join(ROOT, "site"), outDir = join(ROOT, "dist") } = {}) {
   const template = readFileSync(join(sourceDir, "page.html"), "utf8");
+  const whatsNewTemplate = readFileSync(join(sourceDir, WHATSNEW_TEMPLATE), "utf8");
   const { strings, problems } = loadStrings(join(sourceDir, "i18n", "strings.csv"));
-  problems.push(...checkStrings(strings, template));
+  // One table serves both templates, so a text must be used by one of them (and every text a template asks for must exist).
+  problems.push(...checkStrings(strings, `${template}\n${whatsNewTemplate}`));
   problems.push(...checkUpdateRulesFolder(sourceDir));
+  problems.push(...checkWhatsNewFolder(sourceDir));
   if (problems.length > 0) return { pages: [], problems };
+  // The newest version in the "What's new" data is the one the home page shows in its top bar.
+  const latest = latestWhatsNew(sourceDir);
 
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
   const pages = [];
   for (const { code } of LANGUAGES) {
     mkdirSync(join(outDir, code), { recursive: true });
-    writeFileSync(join(outDir, code, "index.html"), renderPage(template, strings[code], code));
+    writeFileSync(join(outDir, code, "index.html"), renderPage(template, strings[code], code, { computed: { latest } }));
+    mkdirSync(join(outDir, code, WHATSNEW_FOLDER), { recursive: true });
+    writeFileSync(join(outDir, code, WHATSNEW_FOLDER, "index.html"), renderPage(whatsNewTemplate, strings[code], code, { folder: WHATSNEW_FOLDER }));
     pages.push(code);
   }
   for (const name of PLAIN_PAGES) {

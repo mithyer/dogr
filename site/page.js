@@ -1,4 +1,4 @@
-// Script of the dogr.dev home page. The page works without it: the command can be selected by hand, and the language menu is a
+// Script of the dogr.dev home page and of the "What's new" page (the two share the top bar). The page works without it: the command can be selected by hand, and the language menu is a
 // plain <details> that lists English and the language of the page as ordinary links. This script only adds three small things:
 //   1. the Copy button of the install command,
 //   2. the languages that are likely for this visitor, added to the language menu when it is opened: the browser's language
@@ -71,7 +71,8 @@ function setUpLanguageMenu(menu) {
     const language = LANGUAGES.find((candidate) => candidate.code === code);
     if (!language) return;
     const link = document.createElement("a");
-    link.href = `/${code}/`;
+    // The same page in the other language: the menu of the "What's new" page names its folder (data-folder), the home page has none.
+    link.href = `/${code}/${menu.dataset.folder ?? ""}`;
     link.lang = language.html;
     link.hreflang = language.html;
     link.dataset.code = code;

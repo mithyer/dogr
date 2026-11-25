@@ -391,10 +391,13 @@ twelve as the app).
 | `site/i18n/strings.csv` | Every text of the page, one row per key, one column per language (`key,en,de,es,ko,ja,zh,zh-TW,ru,it,fr,pt,tr`, the order of the app's table). Edit this file, never the generated pages |
 | `site/style.css`, `site/page.js`, `site/icon.svg`, `site/img/` | Styles, the copy buttons and the language menu, the icon and the screenshots |
 | `site/ios/update-rules-<n>.json` | The rules the iPhone app reads to decide how strongly to suggest an update (see below). `<n>` is the format number |
+| `site/whatsnew.html`, `site/whatsnew.js`, `site/whatsnew.mjs`, `site/ios/whatsnew-<n>.json` | The "What's new" page (`/ios/whatsnew`): the template (built once per language like the home page), the script that draws the list in the browser, the rules that script uses (splitting the notes, choosing a language), and the data file it draws from (see below). `<n>` is the format number |
+| `tools/whatsnew.mjs` | Keeps that data file up to date from the App Store and publishes the page (see below) |
 | `lang.js` | The twelve languages and the rules that pick one (cookie, then `Accept-Language`, then English; a country to a language). Used by the Worker, the build and the page |
-| `build-site.mjs` | Builds `dist/` (git-ignored): one page per language at `/<code>/`, `sitemap.xml`, `robots.txt` and the files above. It refuses to build when a language lacks a key, has a key too many, an empty text, other markup than English or another number |
-| `worker.js` | Answers `/setup.sh` (passes through the script on the `main` branch of this repository, kept for 60 seconds; anything that does not start with `#!/bin/sh` becomes an error status, so a broken answer never reaches `\| sh`), `/` (sends the visitor to the page in their language), `/get` (a temporary redirect to the app's page in the App Store, `APP_STORE_URL`; the download badges and the QR code of the home page point here, so the target can change without making the code again) and `/_geo` (a language suggested by the country of the request, nothing else) |
-| `wrangler.jsonc` | Names the Worker `dogr-site`, runs `node build-site.mjs` before every deploy, serves `dist/`, sends only `/setup.sh`, `/`, `/get` and `/_geo` to `worker.js`, and attaches the domain `dogr.dev` |
+| `app-store.js` | The App Store address `/get` leads to (`APP_STORE_URL`). It is not in `worker.js` because a Worker must export only its handler: the current Cloudflare runtime refuses other exports, which also broke `wrangler dev` |
+| `build-site.mjs` | Builds `dist/` (git-ignored): one page per language at `/<code>/` and `/<code>/ios/whatsnew/`, `sitemap.xml`, `robots.txt` and the files above. It refuses to build when a language lacks a key, has a key too many, an empty text, other markup than English or another number |
+| `worker.js` | Answers `/setup.sh` (passes through the script on the `main` branch of this repository, kept for 60 seconds; anything that does not start with `#!/bin/sh` becomes an error status, so a broken answer never reaches `\| sh`), `/` and `/ios/whatsnew` (send the visitor to the page in their language), `/get` (a temporary redirect to the app's page in the App Store, `APP_STORE_URL` of `app-store.js`; the download badges and the QR code of the home page point here, so the target can change without making the code again) and `/_geo` (a language suggested by the country of the request, nothing else) |
+| `wrangler.jsonc` | Names the Worker `dogr-site`, runs `node build-site.mjs` before every deploy, serves `dist/`, sends only `/setup.sh`, `/`, `/get`, `/_geo`, `/ios/whatsnew` and `/ios/whatsnew/` to `worker.js`, and attaches the domain `dogr.dev` |
 
 How a visitor gets a language: `/` looks at the `lang` cookie (set only when someone picks a language in the menu), then at the
 browser's language list, then falls back to English; English is shown at `/` itself, any other language by a temporary
@@ -437,6 +440,36 @@ The GitHub address of the script (`https://raw.githubusercontent.com/mithyer/dog
 versions of the app show it, and it stays the fallback. To take the site down, delete the Worker `dogr-site`
 in the Cloudflare dashboard (Workers & Pages); nothing else depends on it.
 
+### The "What's new" page
+
+`https://dogr.dev/ios/whatsnew` shows what each version of the app changed, newest first, in the visitor's language (chosen like the
+home page: `/ios/whatsnew` redirects to `/<code>/ios/whatsnew/`, English is served at the address itself). The notes are the
+App Store's own "What's New" texts, one per language. A language a version has no text in shows the English text, marked with the
+language. The page itself is static; the browser draws the list from `/ios/whatsnew-1.json`:
+```json
+{ "schema": 1, "versions": [ { "version": "0.4", "notes": { "en": "Summary.\n\n• One\n• Two", "de": "…" } } ] }
+```
+`notes` is keyed by the site's language codes (`en`, `de`, `es`, `ko`, `ja`, `zh`, `zh-tw`, `ru`, `it`, `fr`, `pt`, `tr`); English is required.
+There is no date: App Store Connect does not give the real release date. The number in the file name is the format, as with the
+update rules. The top bar of the home page shows `v<newest version>` of this file and leads to the page. `node build-site.mjs`
+refuses a file that is not valid (a version out of order or repeated, no English text, an unknown language, a text over 4000 characters).
+
+To bring it up to date and publish it, run the script (it needs the App Store Connect key in `ASC_KEY_ID`, `ASC_ISSUER_ID` and
+`ASC_PRIVATE_KEY_PATH`, or in `~/.config/dogr/testflight.json`, and the `asc` command-line tool):
+
+```sh
+node tools/whatsnew.mjs --dry-run    # only show what would be added
+node tools/whatsnew.mjs              # add, check, ask, deploy, commit locally
+```
+
+It reads the released iOS versions of the app, keeps those newer than the newest version in the file (nothing newer: it says so and
+stops), reads their notes in every language, and adds them. A version without an English text is skipped with a message. Then it
+runs the site tests and a test build, asks, runs `npx wrangler@4 deploy`, and commits only the data file (`feat(site): add the release notes
+of 0.5`). It never pushes. If a check, the question or the deploy fails, the old file is put back, so running it again redoes the
+whole update. Other uncommitted changes in this repository stop a deploy (they would be published too) unless `--allow-dirty`.
+Options: `--no-deploy` (write and check only; deploy by hand later), `--no-commit`, `--yes` (do not ask), `--skip-tests`,
+`--app <id>` (default: `ASC_APP_ID`, else the id in `app-store.js`). The key is never printed or written anywhere.
+
 ## Tests
 
 ```sh
@@ -455,7 +488,7 @@ the tailcat route (macOS with Homebrew and Linux with a downloaded release for t
 the iroh route (macOS and Linux for two processors, a processor with no release, a wrong checksum, a failed download, a dumbpipe that is installed, too old or lacks `--custom-alpn`, a relay address that is refused or passed on to the service (and the build of a dumbpipe that has `--relay`, with and without `cargo`), saved secrets that are used again or replaced when malformed, file modes, a ticket that cannot be read, a service that prints no ticket, an old log that must not be trusted, a ticket of another key, a relay that cannot be reached, a service that does not start, another port, settings already there or older, Collie not reading them, and the questions and options that lead to it; the secrets are checked to appear in no output and not in the runner),
 the SSH route (the line added, replaced or already there, other lines kept, a key that is refused, other ports, no host key, SSH not answering, the key never printed), the Tailscale route refusing leftovers, answering at the terminal, no terminal, wrong options, running through a pipe, a download that stops half way, and the progress line (drawn when asked, quiet without a terminal or with `DOGR_PROGRESS=never`, the size in megabytes, a server that gives no length, small files, a failing download, both orders of `-o` and the address). the push keys (made before the first start, an installed Collie restarted once, keys that are there already, Collie refusing, a failure that only warns, `--no-push`, a dry run). `shellcheck` runs too when it is installed.
 
-The site has its own tests (the language rules, the string table and its checks, the build, and the Worker with a stand-in for the static files): `node --test tests/site.test.mjs`.
+The site has its own tests (the language rules, the string table and its checks, the build, and the Worker with a stand-in for the static files): `node --test tests/site.test.mjs`. The "What's new" page's rules and the update script (run with stand-ins for the App Store, git and Cloudflare) are tested in `tests/whatsnew.test.mjs`; run everything with `node --test tests/*.test.mjs`.
 
 ## What has and has not been checked
 

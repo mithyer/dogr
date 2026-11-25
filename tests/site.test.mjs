@@ -12,11 +12,16 @@ import { fileURLToPath } from "node:url";
 import {
   PLAIN_PAGES,
   UPDATE_RULES_DIR,
+  WHATSNEW_FOLDER,
   build,
+  canonicalOf,
   checkStrings,
   checkUpdateRules,
   checkUpdateRulesFolder,
+  checkWhatsNew,
+  checkWhatsNewFolder,
   compareVersions,
+  latestWhatsNew,
   loadStrings,
   parseCsv,
   placeholdersOf,
@@ -35,10 +40,13 @@ import {
   parseAcceptLanguage,
   pickLanguage,
 } from "../lang.js";
-import worker, { APP_STORE_URL } from "../worker.js";
+import { APP_STORE_URL } from "../app-store.js";
+import worker from "../worker.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const TEMPLATE = readFileSync(join(ROOT, "site", "page.html"), "utf8");
+/** The template of the "What's new" page; it shares the strings table with the home page. */
+const WHATSNEW_TEMPLATE = readFileSync(join(ROOT, "site", "whatsnew.html"), "utf8");
 const STRINGS_FILE = join(ROOT, "site", "i18n", "strings.csv");
 
 // The five pictures are the current App Store scenes, with descriptions for their actual contents.
@@ -377,6 +385,67 @@ describe("the update rules file of the app", () => {
     assert.match(edit((r) => { r.releases = []; })[0], /"releases" must be an object/);
   });
 });
+// The data file the "What's new" page draws itself from. TEST:tests/site.test.mjs[the What's new page]
+describe("the What's new data file", () => {
+  const good = JSON.stringify({
+    schema: 1,
+    versions: [
+      { version: "0.10", notes: { en: "Ten\n\n• a", de: "Zehn" } },
+      { version: "0.9", notes: { en: "Nine" } },
+    ],
+  });
+  /** Checks the good file after one change. */
+  const edit = (change) => {
+    const data = JSON.parse(good);
+    change(data);
+    return checkWhatsNew(JSON.stringify(data));
+  };
+
+  test("a good file passes, and the real one does too", () => {
+    assert.deepEqual(checkWhatsNew(good), []);
+    assert.deepEqual(checkWhatsNewFolder(join(ROOT, "site")), []);
+  });
+
+  test("the newest version is the first one, compared as numbers", () => {
+    assert.equal(latestWhatsNew(join(ROOT, "site")), JSON.parse(readFileSync(join(ROOT, "site", UPDATE_RULES_DIR, "whatsnew-1.json"), "utf8")).versions[0].version);
+    // 0.10 comes before 0.9 although it sorts lower as text.
+    assert.match(edit((d) => d.versions.reverse())[0], /"0\.10" must come before "0\.9"/);
+  });
+
+  test("a broken file is refused, so a typo cannot turn into an empty or wrongly ordered page", () => {
+    assert.match(checkWhatsNew("{nope")[0], /not valid JSON/);
+    assert.match(checkWhatsNew("[]")[0], /must be a JSON object/);
+    assert.match(edit((d) => { d.schema = 2; })[0], /"schema" must be 1/);
+    assert.match(edit((d) => { d.versions = []; })[0], /at least one version/);
+    assert.match(edit((d) => { d.versions[1].version = "0.10"; })[0], /must come before/);
+    assert.match(edit((d) => { d.versions[0].version = "ten"; })[0], /needs a "version"/);
+    assert.match(edit((d) => { d.versions[0].notes = []; })[0], /"notes" must be an object/);
+    assert.match(edit((d) => { delete d.versions[1].notes.en; d.versions[1].notes.de = "Neun"; })[0], /needs an English text/);
+    assert.match(edit((d) => { d.versions[0].notes.xx = "?"; })[0], /"xx" is not a language code/);
+    assert.match(edit((d) => { d.versions[0].notes.de = "   "; })[0], /the de text must be a non-empty string/);
+    assert.match(edit((d) => { d.versions[0].notes.de = 7; })[0], /the de text must be a non-empty string/);
+    assert.match(edit((d) => { d.versions[0].notes.de = "x".repeat(4001); })[0], /longer than 4000/);
+  });
+
+  test("the folder check wants format 1 and checks every whatsnew file, and leaves the update rules alone", () => {
+    const site = mkdtempSync(join(tmpdir(), "dogr-whatsnew-site-"));
+    try {
+      const folder = join(site, UPDATE_RULES_DIR);
+      mkdirSync(folder);
+      assert.match(checkWhatsNewFolder(site)[0], /whatsnew-1\.json: missing/);
+      writeFileSync(join(folder, "whatsnew-1.json"), good);
+      assert.deepEqual(checkWhatsNewFolder(site), []);
+      writeFileSync(join(folder, "whatsnew-2.json"), good);
+      assert.match(checkWhatsNewFolder(site)[0], /whatsnew-2\.json: "schema" must be 2/);
+      // The rules check does not mistake the data files for typos of a rules file name.
+      writeFileSync(join(folder, "update-rules-1.json"), JSON.stringify({ schema: 1, releases: {}, appBelow: [] }));
+      assert.deepEqual(checkUpdateRulesFolder(site), []);
+    } finally {
+      rmSync(site, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("the real site", () => {
   const out = mkdtempSync(join(tmpdir(), "dogr-site-"));
   after(() => rmSync(out, { recursive: true, force: true }));
@@ -384,7 +453,8 @@ describe("the real site", () => {
   test("the string table matches English and the template", () => {
     const { strings, problems } = loadStrings(STRINGS_FILE);
     assert.deepEqual(problems, []);
-    assert.deepEqual(checkStrings(strings, TEMPLATE), []);
+    // The table serves both templates, so a key is "used" when either of them asks for it.
+    assert.deepEqual(checkStrings(strings, `${TEMPLATE}\n${WHATSNEW_TEMPLATE}`), []);
   });
 
   const result = build({ outDir: out });
@@ -480,9 +550,52 @@ describe("the real site", () => {
     }
   });
 
+  // TEST:tests/site.test.mjs[the What's new page]
+  test("the pill of every home page shows the newest version and leads to the What's new page of its language", () => {
+    const latest = latestWhatsNew(join(ROOT, "site"));
+    assert.match(latest, /^\d+\.\d+/);
+    for (const { code } of LANGUAGES) {
+      const page = readFileSync(join(out, code, "index.html"), "utf8");
+      assert.ok(page.includes(`href="/${code}/ios/whatsnew/" title="`), `${code}: the pill leads to its own language's What's new page`);
+      assert.match(page, new RegExp(`<a class="pill"[^>]*>v${latest.replaceAll(".", "\\.")}</a>`), `${code}: the pill shows the newest version`);
+    }
+  });
+
+  // TEST:tests/site.test.mjs[the What's new page]
+  test("every language has its own What's new page, complete and linked to the others", () => {
+    for (const { code, html, name } of LANGUAGES) {
+      const page = readFileSync(join(out, code, "ios", "whatsnew", "index.html"), "utf8");
+      assert.ok(page.includes(`<html lang="${html}">`), code);
+      assert.ok(!page.includes("{{") && !page.includes("<!--"), `${code}: nothing is left of the template`);
+      assert.equal((page.match(/rel="alternate" hreflang=/g) ?? []).length, 13, `${code}: 12 languages and x-default`);
+      assert.ok(page.includes('hreflang="x-default" href="https://dogr.dev/ios/whatsnew/"'), `${code}: x-default`);
+      assert.ok(page.includes(`<link rel="canonical" href="${canonicalOf(code, WHATSNEW_FOLDER)}">`), `${code}: canonical`);
+      // The menu links lead to this same page in the other language, not to the home page.
+      assert.ok(page.includes(`href="/${code}/ios/whatsnew/" lang="${html}"`), `${code}: its own entry of the menu`);
+      assert.ok(page.includes('href="/en/ios/whatsnew/" lang="en"'), `${code}: English is always one click away`);
+      assert.ok(page.includes(`data-folder="ios/whatsnew/"`) && page.includes(`data-current="${code}"`), `${code}: page.js knows which page the menu is on`);
+      assert.ok(page.includes(`<span>${name}</span>`), `${code}: the button shows the language name`);
+      // The way back and the data the script draws the list from.
+      assert.ok(page.includes(`<a href="/${code}/">`), `${code}: the way back to the home page of this language`);
+      assert.ok(page.includes('data-src="/ios/whatsnew-1.json"') && page.includes(`data-lang="${code}"`), `${code}: the data file and the language`);
+      assert.ok(/data-loading="[^"]+" data-error="[^"]+" data-latest="[^"]+"/.test(page), `${code}: the texts of the states the script draws`);
+      assert.ok(page.includes('<script type="module" src="/whatsnew.js">'), `${code}: the script`);
+    }
+    for (const file of ["whatsnew.js", "whatsnew.mjs"]) assert.ok(readdirSync(out).includes(file), file);
+  });
+
+  test("the data file is copied unchanged to /ios/ and the home page names the same newest version", () => {
+    const source = readFileSync(join(ROOT, "site", UPDATE_RULES_DIR, "whatsnew-1.json"), "utf8");
+    assert.equal(readFileSync(join(out, UPDATE_RULES_DIR, "whatsnew-1.json"), "utf8"), source);
+    assert.equal(latestWhatsNew(join(ROOT, "site")), JSON.parse(source).versions[0].version);
+  });
+
   test("the sitemap lists every language and the robots file names it", () => {
     const text = sitemap();
-    assert.equal((text.match(/<loc>/g) ?? []).length, 12 + PLAIN_PAGES.length);
+    // The home page and the "What's new" page of every language, then the plain pages.
+    assert.equal((text.match(/<loc>/g) ?? []).length, 12 + 12 + PLAIN_PAGES.length);
+    assert.ok(text.includes("<loc>https://dogr.dev/ios/whatsnew/</loc>") && text.includes("<loc>https://dogr.dev/de/ios/whatsnew/</loc>"));
+    assert.ok(!text.includes("<loc>https://dogr.dev/en/ios/whatsnew/</loc>"), "English is listed once, at the address without a language");
     assert.ok(text.includes("<loc>https://dogr.dev/privacy/</loc>") && text.includes("<loc>https://dogr.dev/support/</loc>"));
     assert.ok(text.includes("<loc>https://dogr.dev/</loc>"));
     assert.ok(text.includes("<loc>https://dogr.dev/zh-tw/</loc>"));
@@ -605,6 +718,51 @@ describe("worker: the home page", () => {
     const answer = await worker.fetch(homeRequest(), env);
     assert.equal(answer.status, 200);
     assert.equal(env.asked.length, 2);
+  });
+
+  // The "What's new" page is chosen like the home page, in its own folder of every language. TEST:tests/site.test.mjs[the What's new page]
+  test("/ios/whatsnew gives the English page itself, with or without the closing slash", async () => {
+    for (const path of ["/ios/whatsnew", "/ios/whatsnew/"]) {
+      const env = files();
+      const answer = await worker.fetch(homeRequest({}, { path }), env);
+      assert.equal(answer.status, 200, path);
+      assert.deepEqual(env.asked, ["/en/ios/whatsnew/"], path);
+      assert.equal(answer.headers.get("vary"), "Accept-Language, Cookie");
+    }
+  });
+
+  test("/ios/whatsnew sends other languages to their own What's new page, and keeps the query string", async () => {
+    const german = await worker.fetch(homeRequest({ "accept-language": "de" }, { path: "/ios/whatsnew" }), files());
+    assert.equal(german.status, 302);
+    assert.equal(german.headers.get("location"), "/de/ios/whatsnew/");
+    const chinese = await worker.fetch(homeRequest({ "accept-language": "zh-TW" }, { path: "/ios/whatsnew/?from=pill" }), files());
+    assert.equal(chinese.headers.get("location"), "/zh-tw/ios/whatsnew/?from=pill");
+    const cookie = await worker.fetch(homeRequest({ "accept-language": "en", cookie: "lang=ja" }, { path: "/ios/whatsnew" }), files());
+    assert.equal(cookie.headers.get("location"), "/ja/ios/whatsnew/");
+  });
+
+  test("/ios/whatsnew: a file store that fails on the retry too is an error, never a wrong page", async () => {
+    const env = {
+      ASSETS: {
+        async fetch() {
+          throw new Error("store down");
+        },
+      },
+    };
+    await assert.rejects(() => worker.fetch(homeRequest({}, { path: "/ios/whatsnew" }), env), /store down/);
+  });
+
+  test("only GET and HEAD are answered on /ios/whatsnew", async () => {
+    assert.equal((await worker.fetch(homeRequest({}, { method: "POST", path: "/ios/whatsnew" }), files())).status, 405);
+    assert.equal((await worker.fetch(homeRequest({}, { method: "HEAD", path: "/ios/whatsnew" }), files())).status, 200);
+  });
+
+  test("the data file and the other files below /ios/ are not the Worker's business", async () => {
+    assert.equal((await worker.fetch(homeRequest({}, { path: "/ios/whatsnew-1.json" }), files())).status, 404);
+    const routes = readFileSync(join(ROOT, "wrangler.jsonc"), "utf8").match(/"run_worker_first": \[([^\]]*)\]/)[1];
+    assert.match(routes, /"\/ios\/whatsnew"/);
+    assert.match(routes, /"\/ios\/whatsnew\/"/);
+    assert.ok(!/whatsnew-1/.test(routes), "the data file is a plain file");
   });
 
   test("any other address is a 404", async () => {
