@@ -54,11 +54,11 @@ const STRINGS_FILE = join(ROOT, "site", "i18n", "strings.csv");
 describe("App Store screenshots", () => {
   test("the page references the current scenes and each asset is present", () => {
     for (const [name, alt] of [
-      ["iphone-machines-v03.jpg", "hero.alt"],
-      ["iphone-workspaces-v03.jpg", "r1.alt"],
-      ["iphone-preview-v03.jpg", "r2.alt"],
-      ["iphone-conversation-v03.jpg", "r3.alt"],
-      ["ipad-panels-v03.jpg", "r5.alt"],
+      ["iphone-machines-v05.jpg", "hero.alt"],
+      ["iphone-workspaces-v05.jpg", "r1.alt"],
+      ["iphone-preview-v05.jpg", "r2.alt"],
+      ["iphone-conversation-v05.jpg", "r3.alt"],
+      ["ipad-panels-v05.jpg", "r5.alt"],
     ]) {
       assert.ok(TEMPLATE.includes(`src="/img/${name}"`), name);
       assert.ok(TEMPLATE.includes(`alt="{{@${alt}}}"`), alt);
