@@ -1,5 +1,5 @@
 {
   "schema": 1,
-  "releases": { "0.3": "orange", "0.4": "red" },
+  "releases": { "0.3": "orange", "0.4": "red", "0.5": "red" },
   "appBelow": []
 }
